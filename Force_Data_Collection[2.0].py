@@ -3,7 +3,6 @@ import json
 import numpy as np
 import time
 import math
-import pytz
 from datetime import datetime
 import csv
 import can
@@ -15,51 +14,63 @@ import pandas as pd
 def get_pos_estimate(node_id):
 
    # Send read command
+#     bus.send(can.Message(
+#         arbitration_id=(node_id << 5 | 0x04), # 0x04: RxSdo
+#         data=struct.pack('<BHB', OPCODE_READ, 195, 0),
+#         is_extended_id=False
+#     ))
+    
     bus.send(can.Message(
-        arbitration_id=(node_id << 5 | 0x04), # 0x04: RxSdo
-        data=struct.pack('<BHB', OPCODE_READ, 195, 0),
+        arbitration_id=(node_id << 5 | 0x09), # 0x04: RxSdo
+        data=b'',
         is_extended_id=False
     ))
     
-        # Await reply
-    
+    # Await reply
+    #msg = bus.recv(0.0003)
     for msg in bus:
-        if msg.arbitration_id == (node_id << 5 | 0x05): # 0x05: TxSdo
+        if msg.arbitration_id == (node_id << 5 | 0x09): # 0x05: TxSdo
             break
     # Unpack and print reply
-    #_, _, _, pos_return_value = struct.unpack_from('<BHB' + 'f', msg.data)
+    _, _, _, pos_return_value = struct.unpack_from('<BHB' + 'f', msg.data)
     #pos_return_value = pos_return_value/(math.pi*2)
     
-    return msg.data
+    return pos_return_value
     
 
 
 def get_torque_estimate(node_id):
 
-   # Send read command
+#    # Send read command
+#     bus.send(can.Message(
+#         arbitration_id=(node_id << 5 | 0x04), # 0x04: RxSdo
+#         data=struct.pack('<BHB', OPCODE_READ, 363, 0),
+#         is_extended_id=False
+#     ))
+
     bus.send(can.Message(
-        arbitration_id=(node_id << 5 | 0x04), # 0x04: RxSdo
-        data=struct.pack('<BHB', OPCODE_READ, 363, 0),
+        arbitration_id=(node_id << 5 | 0x1c), 
+        data=b'',
         is_extended_id=False
     ))
     
-        # Await reply
-    
+    #Await reply
+    #msg = bus.recv(0.0003)
     for msg in bus:
-        if msg.arbitration_id == (node_id << 5 | 0x05): # 0x05: TxSdo
+        if msg.arbitration_id == (node_id << 5 | 0x1c): 
             break
+        
     # Unpack and print reply
-    #_, _, _, pos_return_value = struct.unpack_from('<BHB' + 'f', msg.data)
-    #pos_return_value = pos_return_value/(math.pi*2)
+    _, _, _, torque_return_value = struct.unpack_from('<BHB' + 'f', msg.data)
     
-    return msg.data
+    return torque_return_value
 
 
 #Set up file to save data 
-file_path = "/home/traveler/Downloads/Data/06:50:-11-7-24.csv"
+file_path = "/home/traveler/Downloads/Data/09:50:-11-7-24.csv"
 
 #define file header 
-csv_header = ['Global Time', 'Time', 'Motor 0 Position', 'Motor 1 Position', 'Motor 0 Torque','Motor 1 Torque']
+csv_header = ['Time', 'Motor 0 Position', 'Motor 1 Position', 'Motor 0 Torque','Motor 1 Torque']
 
 with open(file_path, mode='w', newline='') as file:
     writer = csv.writer(file)
