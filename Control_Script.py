@@ -5,7 +5,6 @@ import time
 import odrive
 import math
 import argparse
-import keyboard
 from odrive.enums import *
 import matplotlib.pyplot as plt
 
@@ -29,13 +28,13 @@ class Hopper_State_Machine:
         self.state = "Idle"
 
     def compression(self):
-        self.Kc = 10 
-        self.Cd = 10
+        self.Kc = -1
+        self.Cd = 1
         return 
 
     def extension(self):  
-        self.K_c = -100
-        self.C_d = 10 
+        self.K_c = 1600
+        self.C_d = 1
         return 
     
     def flight(self): #I know we discussed swithcing the spring stiffness during flight phase but it is already being switch once it enterss compression mode so do we need to switch if no torques are being applied?
@@ -43,20 +42,21 @@ class Hopper_State_Machine:
         
     
     def get_state(self, motor1_encoder_estimate, motor2_encoder_estimate, latch_status):
-        extension_limit_value = 0.3
-        compression_limit_value = 0.1
+        extension_limit_value = 0.075
+        compression_limit_value = 0.35
+        offset = 0.045
         
         if latch_status == 0: 
             return "idle"
         
         elif latch_status == 1:
-            if (motor1_encoder_estimate >= extension_limit_value) and (motor2_encoder_estimate >= extension_limit_value): 
+            if (motor1_encoder_estimate >= extension_limit_value) and (motor2_encoder_estimate >= extension_limit_value + offset): 
                 return "flight"       
                 
-            elif (motor1_encoder_estimate > compression_limit_value and motor1_encoder_estimate < extension_limit_value) and (motor2_encoder_estimate > compression_limit_value and motor2_encoder_estimate < extension_limit_value):
+            elif (motor1_encoder_estimate > compression_limit_value and motor1_encoder_estimate < extension_limit_value) and (motor2_encoder_estimate > compression_limit_value + offset and motor2_encoder_estimate < extension_limit_value + offset):
                 return "compression"
                 
-            elif (motor1_encoder_estimate <= compression_limit_value) and (motor2_encoder_estimate <= compression_limit_value):
+            elif (motor1_encoder_estimate <= compression_limit_value) and (motor2_encoder_estimate <= compression_limit_value + offset):
                 return "extension"
                 
             else:
@@ -65,43 +65,46 @@ class Hopper_State_Machine:
 
 
 def get_leg_geometry(Phi_1, Phi_2):
+    #Converting the absolute encoder estimated into radians with refernce the the vertical axis (this is need as it was the way the jacobian was derived)
+    Phi_2 = (math.pi/2) + ((0.225+0.045 - Phi_2) * (math.pi*2))
+    Phi_1 = ((3*math.pi)/2) - ((0.225 - Phi_1) * (math.pi*2))
+    
     Upper_Link_Len = 100 #mm
     Lower_Link_Len = 200 #mm
     Toe_Len = 47.5 #mm
     theta = 0.5*(Phi_1 + Phi_2)
     gamma = 0.5*(Phi_2 - Phi_1)
-    len = Toe_Len + Upper_Link_Len*math.cos(gamma) + math.sqrt((Lower_Link_Len)^2 + (Upper_Link_Len)^2*(math.sin(gamma)^2))
-    beta = -Upper_Link_Len*math.sin(gamma)*(1 + ((Upper_Link_Len * math.cos(gamma))/math.sqrt((Lower_Link_Len)^2 - (Upper_Link_Len)^2*math.sin(gamma)^2)))
+    length = Toe_Len + Upper_Link_Len*math.cos(gamma) + math.sqrt((Lower_Link_Len)**2 + (Upper_Link_Len)**2*(math.sin(gamma)**2))
+    beta = -Upper_Link_Len*math.sin(gamma)*(1 + ((Upper_Link_Len * math.cos(gamma))/math.sqrt((Lower_Link_Len)**2 - (Upper_Link_Len)**2*math.sin(gamma)**2)))
     Leg_Geometry_Dict = {
-        "Leg Length": len,
+        "Leg Length": length,
         "Leg Angle": theta, 
         "Beta": beta
     }
     return Leg_Geometry_Dict
 
-def FK(len, theta):
-    x = len*math.sin(theta)
-    z = len*math.cos(theta)
+def FK(length, theta):
+    x = length*math.sin(theta)
+    z = length*math.cos(theta)
     Coords = (x,z)
     return Coords
 
 def IK(x,z):
     theta = math.atan2(x,z)
-    len = math.sqrt(x**2 + z**2)
-    Polar_Coords = (len, theta)
+    length = math.sqrt(x**2 + z**2)
+    Polar_Coords = (length, theta)
     return Polar_Coords
 
-def get_Jacobian(len, theta, beta):
-    Jacobian = np.array([[0.5(-beta*math.sin(theta) + len*math.cos(theta)), 0.5(beta*math.sin(theta) + len*math.cos(theta))], 
-                         [ 0.5(-beta *math.cos(theta) - len*math.sin(theta)), 0.5(beta*math.cos(theta) - len*math.sin(theta))]])
+def get_Jacobian(length, theta, beta):
+    Jacobian = np.array([[0.5*(-beta*math.sin(theta) + length*math.cos(theta)), 0.5*(beta*math.sin(theta) + length*math.cos(theta))], 
+                         [ 0.5*(-beta *math.cos(theta) - length*math.sin(theta)), 0.5*(beta*math.cos(theta) - length*math.sin(theta))]])
     return Jacobian
 
 def get_Torques(Jacobian, Forces):
-    Torques = Jacobian.transpose()*Forces
-    Max_Torque = 3.5 #Nm
-
+    Torques = np.dot(Jacobian.transpose(), Forces)
+    Max_Torque = 4 #Nm
     for Torque in Torques:
-        if Torque > Max_Torque:
+        if Torque[0] > Max_Torque:
             Torque = Max_Torque
 
     return Torques 
@@ -137,10 +140,10 @@ def set_torque(node_id, torque):
         is_extended_id=False
     ))
 
-def set_position(node_id, position, ff_vel, ff_tor):
+def set_position(node_id, position):
     bus.send(can.Message(
         arbitration_id=(node_id << 5 | 0x0c),
-        data=struct.pack('<fhh', position, int(ff_vel), int(ff_tor)),
+        data=struct.pack('<f', position),
         is_extended_id=False
     ))
 
@@ -166,8 +169,8 @@ def get_pos_estimate(node_id):
             break
     # Unpack and print reply
     _, _, _, pos_return_value = struct.unpack_from('<BHB' + 'f', msg.data)
-    pos_return_value = pos_return_value*(math.pi*2)
     
+
     return pos_return_value
 
 def get_torque_estimate(node_id):
@@ -189,7 +192,7 @@ def get_torque_estimate(node_id):
     return torque_return_value
 
 def get_desired_force(K_spring, K_damping, centerbar_length, centerbar_length_deriv):
-    Force = K_spring * centerbar _length + K_damping* centerbar_length_deriv
+    Force = K_spring * centerbar_length + K_damping* centerbar_length_deriv
     return Force 
 
 if __name__ == "__main__":
@@ -219,11 +222,13 @@ if __name__ == "__main__":
     #Initalize stat object 
     State_Machine = Hopper_State_Machine(0,0)
 
-    #Initalize the Force
     #Initalize the latch status 
     latch_status = 0
     #Check the hopping mode
-    set_position(0,0)
+    set_position(nodes[0],0.225+0.045)
+    set_position(nodes[1],0.225)
+    time.sleep(1.5)
+
 
     #Get the initial motor position estimates
     initial_motor1_pos = get_pos_estimate(nodes[0])
@@ -231,8 +236,8 @@ if __name__ == "__main__":
     Start_Time = time.perf_counter()
     
     Initial_Leg_Geometry_Estimate = get_leg_geometry(initial_motor1_pos, initial_motor2_pos)
-    Initial_Toe_Position_Estimate = FK(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"])
-    Initial_Centerbar_Length = Initial_Toe_Position[1]
+    Initial_Toe_Position_Estimate = FK(Initial_Leg_Geometry_Estimate["Leg Length"], Initial_Leg_Geometry_Estimate["Leg Angle"])
+    Initial_Centerbar_Length = Initial_Toe_Position_Estimate[1]
 
     while True:
         #grab initial motor position estimate 
@@ -242,6 +247,7 @@ if __name__ == "__main__":
         
         #Check the system state
         State =  State_Machine.get_state(motor1_pos, motor2_pos, latch_status)
+        print(State)
 
         #Calculate the length of the centerbar length 
         Leg_Geometry = get_leg_geometry(motor1_pos, motor2_pos)
@@ -260,7 +266,7 @@ if __name__ == "__main__":
             State_Machine.compression()
             Force = get_desired_force(State_Machine.Kc, State_Machine.Cd, Centerbar_Length, Centerbar_Length_Deriv)
             Jacobian = get_Jacobian(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"], Leg_Geometry["Beta"])
-            Torques = get_Torques(Jacobian, Force)
+            Torques = get_Torques(Jacobian, [[0],[Force]])
             set_torque(nodes[0], Torques[0])
             set_torque(nodes[1], Torques[1])
 
@@ -271,9 +277,9 @@ if __name__ == "__main__":
             State_Machine.extension()
             Force = get_desired_force(State_Machine.Kc, State_Machine.Cd, Centerbar_Length, Centerbar_Length_Deriv)
             Jacobian = get_Jacobian(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"], Leg_Geometry["Beta"])
-            Torques = get_Torques(Jacobian, Force)
-            set_torque(nodes[0], Torques[0])
-            set_torque(nodes[1], Torques[1])
+            Torques = get_Torques(Jacobian, [[0],[Force]])
+            set_torque(nodes[0], -Torques[0])
+            set_torque(nodes[1], -Torques[1])
 
         
         elif State == "flight":

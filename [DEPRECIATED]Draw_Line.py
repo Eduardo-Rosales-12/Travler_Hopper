@@ -37,11 +37,11 @@ def get_pos_estimate(node_id):
         
     _, _, _, pos_return_value = struct.unpack_from('<BHB' + format_lookup[pos_endpoint_type], msg.data)
     return pos_return_value
-
-def set_position(node_id, position, ff_vel, ff_torque):
+    
+def set_position(node_id, position):
     bus.send(can.Message(
         arbitration_id=(node_id << 5 | 0x0c),
-        data=struct.pack('<fhh', position, int(ff_vel), int(ff_torque)),
+        data=struct.pack('<f', position),
         is_extended_id=False
     ))
 
@@ -58,12 +58,12 @@ def set_torque(node_id, torque):
         data=struct.pack('<f', torque),
         is_extended_id=False
     ))
-# def set_position_control_mode(node_id):
-#     bus.send(can.Message(
-#         arbitration_id=(node_id << 5 | 0x0b),  # 0x0b: Set_Controller_Mode
-#         data=struct.pack('<II', 2, 1),  # 6: Position
-#         is_extended_id=False
-#     ))
+def set_position_control_mode(node_id):
+    bus.send(can.Message(
+        arbitration_id=(node_id << 5 | 0x0b),  # 0x0b: Set_Controller_Mode
+        data=struct.pack('<II', 3, 1),  # 6: Position
+        is_extended_id=False
+    ))
     
 def set_closed_loop_control(node_id):
     bus.send(can.Message(
@@ -135,34 +135,32 @@ if __name__ == "__main__":
 
     set_closed_loop_control(node_id_0)
     set_closed_loop_control(node_id_1)
-     
-    #set_position_control_mode(node_id_0)
-    #set_position_control_mode(node_id_1)
+    set_position_control_mode(node_id_0)
+    set_position_control_mode(node_id_1)
     
-    position = 0.0
-    offset = 0.0
-    ff_vel = 2000  # Increased velocity for faster response
-    ff_torque = 30000  # Increased torque for greater force
+    position = 0.05
+    offset = 0.045
+#   ff_vel = 2000  # Increased velocity for faster response
+#   ff_torque = 30000  # Increased torque for greater force
     
-    set_position(node_id_0, position + offset, ff_vel, ff_torque)
-    set_position(node_id_1, position, ff_vel, ff_torque)
-    time.sleep(0.475)  # Reduced initial sleep time for faster oscillation start
+    set_position(node_id_0, position + offset)
+    set_position(node_id_1, position)
+    time.sleep(0.75)  # Reduced initial sleep time for faster oscillation start
     
-    oscilation_position = 0.0
+    oscilation_position = 0.05
     oscilation_num = 10  # Increase oscillation count
-    oscilation_len = 0.5  # Reduced time for faster oscillation
+    oscilation_len = 0.1  # Reduced time for faster oscillation
 
     oscilation_vector = [position if i % 2 == 0 else oscilation_position for i in range(oscilation_num)]
     
     for oscilation in oscilation_vector:
-        set_position(node_id_0, oscilation + offset, ff_vel, ff_torque)
-        set_position(node_id_1, oscilation, ff_vel, ff_torque)
+        set_position(node_id_0, oscilation + offset)
+        set_position(node_id_1, oscilation)
         
         print("oscilation")
         time.sleep(oscilation_len)
 
-    set_position(node_id_0, -0.03, ff_vel, ff_torque)
-    set_position(node_id_1, -0.03, ff_vel, ff_torque)
+    
     time.sleep(0.5)
 
     set_idle(node_id_0)
