@@ -290,7 +290,7 @@ if __name__ == "__main__":
                 
         #Redfine the inital motor positions
         Initial_Centerbar_Length = Centerbar_Length
-        
+        Start_Time = New_Time
     if args.mode == "Dropping":
         while True: 
             print("I'm falling :o")
