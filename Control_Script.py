@@ -22,8 +22,6 @@ class PDController:
         Corrected_Signal = self.Kp * Proportional_Error + self.Kd * Derivative_Error
         return Corrected_Signal
 
-
-
 class Hopper_State_Machine:
     def __init__(self, Kc, Cd):
         self.Kc = Kc
@@ -52,13 +50,13 @@ class Hopper_State_Machine:
             return "idle"
         
         elif latch_status == 1:
-            if motor1_encoder_estimate >= extension_limit_value & motor2_encoder_estimate >= extension_limit_value: 
-                return "idle/flight"       
+            if (motor1_encoder_estimate >= extension_limit_value) and (motor2_encoder_estimate >= extension_limit_value): 
+                return "flight"       
                 
-            elif len_deriv < -0.5:
+            elif (motor1_encoder_estimate > compression_limit_value and motor1_encoder_estimate < extension_limit_value) and (motor2_encoder_estimate > compression_limit_value and motor2_encoder_estimate < extension_limit_value):
                 return "compression"
                 
-            elif motor1_encoder_estimate > compression_limit_value & motor2_encoder_estimate > compression_limit_value:
+            elif (motor1_encoder_estimate <= compression_limit_value) and (motor2_encoder_estimate <= compression_limit_value):
                 return "extension"
                 
             else:
@@ -171,8 +169,6 @@ def get_pos_estimate(node_id):
     pos_return_value = pos_return_value*(math.pi*2)
     
     return pos_return_value
-    
-
 
 def get_torque_estimate(node_id):
 
@@ -191,6 +187,10 @@ def get_torque_estimate(node_id):
     _, _, _, torque_return_value = struct.unpack_from('<BHB' + 'f', msg.data)
     
     return torque_return_value
+
+def get_desired_force(K_spring, K_damping, centerbar_length, centerbar_length_deriv):
+    Force = K_spring * centerbar _length + K_damping* centerbar_length_deriv
+    return Force 
 
 if __name__ == "__main__":
 
@@ -219,36 +219,78 @@ if __name__ == "__main__":
     #Initalize stat object 
     State_Machine = Hopper_State_Machine(0,0)
 
+    #Initalize the Force
     #Initalize the latch status 
     latch_status = 0
     #Check the hopping mode
     if args.mode == "Hopping":
+        set_position(0,0)
+    
+        #Get the initial motor position estimates
         initial_motor1_pos = get_pos_estimate(nodes[0])
         initial_motor2_pos =get_pos_estimate(nodes[1])
+        Start_Time = time.perf_counter()
         
+        Initial_Leg_Geometry_Estimate = get_leg_geometry(initial_motor1_pos, initial_motor2_pos)
+        Initial_Toe_Position_Estimate = FK(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"])
+        Initial_Centerbar_Length = Initial_Toe_Position[1]
+
         while True:
             #grab initial motor position estimate 
             motor1_pos = get_pos_estimate(nodes[0])
             motor2_pos = get_pos_estimate(nodes[1])
+            New_Time = time.perf_counter()
             
             #Check the system state
             State =  State_Machine.get_state(motor1_pos, motor2_pos, latch_status)
+
+            #Calculate the length of the centerbar length 
+            Leg_Geometry = get_leg_geometry(motor1_pos, motor2_pos)
+            Toe_Position = FK(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"])
+            Centerbar_Length = Toe_Position[1] 
+
+            #Calculate the centerbar derivatice 
+            Centerbar_Length_Deriv = (Initial_Centerbar_Length - Centerbar_Length)/(New_Time - Start_Time)
             
             if State == "idle":
                 latch_status = 1
 
             elif State == "compression":
+                set_torque_control_mode(nodes[0])
+                set_torque_control_mode(nodes[1])
+                State_Machine.compression()
+                Force = get_desired_force(State_Machine.Kc, State_Machine.Cd, Centerbar_Length, Centerbar_Length_Deriv)
+                Jacobian = get_Jacobian(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"], Leg_Geometry["Beta"])
+                Torques = get_Torques(Jacobian, Force)
+                set_torque(nodes[0], Torques[0])
+                set_torque(nodes[1], Torques[1])
 
 
             elif State == "extension":
+                set_torque_control_mode(nodes[0])
+                set_torque_control_mode(nodes[1])
+                State_Machine.extension()
+                Force = get_desired_force(State_Machine.Kc, State_Machine.Cd, Centerbar_Length, Centerbar_Length_Deriv)
+                Jacobian = get_Jacobian(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"], Leg_Geometry["Beta"])
+                Torques = get_Torques(Jacobian, Force)
+                set_torque(nodes[0], Torques[0])
+                set_torque(nodes[1], Torques[1])
 
-
+            
             elif State == "flight":
+                set_position_control_mode(nodes[0])
+                set_position_control_mode(nodes[1])
+                State_Machine.flight()
+                set_position(nodes[0], motor1_pos)
+                set_position(nodes[1], motor2_pos)
 
 
             else:
                 print("Phase state could not be determined.")
-
+                
+        #Redfine the inital motor positions
+        Initial_Centerbar_Length = Centerbar_Length
+        
     if args.mode == "Dropping":
         while True: 
             print("I'm falling :o")
