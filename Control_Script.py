@@ -223,83 +223,72 @@ if __name__ == "__main__":
     #Initalize the latch status 
     latch_status = 0
     #Check the hopping mode
-    if args.mode == "Hopping":
-        set_position(0,0)
+    set_position(0,0)
+
+    #Get the initial motor position estimates
+    initial_motor1_pos = get_pos_estimate(nodes[0])
+    initial_motor2_pos =get_pos_estimate(nodes[1])
+    Start_Time = time.perf_counter()
     
-        #Get the initial motor position estimates
-        initial_motor1_pos = get_pos_estimate(nodes[0])
-        initial_motor2_pos =get_pos_estimate(nodes[1])
-        Start_Time = time.perf_counter()
+    Initial_Leg_Geometry_Estimate = get_leg_geometry(initial_motor1_pos, initial_motor2_pos)
+    Initial_Toe_Position_Estimate = FK(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"])
+    Initial_Centerbar_Length = Initial_Toe_Position[1]
+
+    while True:
+        #grab initial motor position estimate 
+        motor1_pos = get_pos_estimate(nodes[0])
+        motor2_pos = get_pos_estimate(nodes[1])
+        New_Time = time.perf_counter()
         
-        Initial_Leg_Geometry_Estimate = get_leg_geometry(initial_motor1_pos, initial_motor2_pos)
-        Initial_Toe_Position_Estimate = FK(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"])
-        Initial_Centerbar_Length = Initial_Toe_Position[1]
+        #Check the system state
+        State =  State_Machine.get_state(motor1_pos, motor2_pos, latch_status)
 
-        while True:
-            #grab initial motor position estimate 
-            motor1_pos = get_pos_estimate(nodes[0])
-            motor2_pos = get_pos_estimate(nodes[1])
-            New_Time = time.perf_counter()
+        #Calculate the length of the centerbar length 
+        Leg_Geometry = get_leg_geometry(motor1_pos, motor2_pos)
+        Toe_Position = FK(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"])
+        Centerbar_Length = Toe_Position[1] 
+
+        #Calculate the centerbar derivatice 
+        Centerbar_Length_Deriv = (Initial_Centerbar_Length - Centerbar_Length)/(New_Time - Start_Time)
+        
+        if State == "idle":
+            latch_status = 1
+
+        elif State == "compression":
+            set_torque_control_mode(nodes[0])
+            set_torque_control_mode(nodes[1])
+            State_Machine.compression()
+            Force = get_desired_force(State_Machine.Kc, State_Machine.Cd, Centerbar_Length, Centerbar_Length_Deriv)
+            Jacobian = get_Jacobian(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"], Leg_Geometry["Beta"])
+            Torques = get_Torques(Jacobian, Force)
+            set_torque(nodes[0], Torques[0])
+            set_torque(nodes[1], Torques[1])
+
+
+        elif State == "extension":
+            set_torque_control_mode(nodes[0])
+            set_torque_control_mode(nodes[1])
+            State_Machine.extension()
+            Force = get_desired_force(State_Machine.Kc, State_Machine.Cd, Centerbar_Length, Centerbar_Length_Deriv)
+            Jacobian = get_Jacobian(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"], Leg_Geometry["Beta"])
+            Torques = get_Torques(Jacobian, Force)
+            set_torque(nodes[0], Torques[0])
+            set_torque(nodes[1], Torques[1])
+
+        
+        elif State == "flight":
+            set_position_control_mode(nodes[0])
+            set_position_control_mode(nodes[1])
+            State_Machine.flight()
+            set_position(nodes[0], motor1_pos)
+            set_position(nodes[1], motor2_pos)
+
+
+        else:
+            print("Phase state could not be determined.")
             
-            #Check the system state
-            State =  State_Machine.get_state(motor1_pos, motor2_pos, latch_status)
+    #Redfine the inital motor positions
+    Initial_Centerbar_Length = Centerbar_Length
+    Start_Time = New_Time
 
-            #Calculate the length of the centerbar length 
-            Leg_Geometry = get_leg_geometry(motor1_pos, motor2_pos)
-            Toe_Position = FK(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"])
-            Centerbar_Length = Toe_Position[1] 
-
-            #Calculate the centerbar derivatice 
-            Centerbar_Length_Deriv = (Initial_Centerbar_Length - Centerbar_Length)/(New_Time - Start_Time)
-            
-            if State == "idle":
-                latch_status = 1
-
-            elif State == "compression":
-                set_torque_control_mode(nodes[0])
-                set_torque_control_mode(nodes[1])
-                State_Machine.compression()
-                Force = get_desired_force(State_Machine.Kc, State_Machine.Cd, Centerbar_Length, Centerbar_Length_Deriv)
-                Jacobian = get_Jacobian(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"], Leg_Geometry["Beta"])
-                Torques = get_Torques(Jacobian, Force)
-                set_torque(nodes[0], Torques[0])
-                set_torque(nodes[1], Torques[1])
-
-
-            elif State == "extension":
-                set_torque_control_mode(nodes[0])
-                set_torque_control_mode(nodes[1])
-                State_Machine.extension()
-                Force = get_desired_force(State_Machine.Kc, State_Machine.Cd, Centerbar_Length, Centerbar_Length_Deriv)
-                Jacobian = get_Jacobian(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"], Leg_Geometry["Beta"])
-                Torques = get_Torques(Jacobian, Force)
-                set_torque(nodes[0], Torques[0])
-                set_torque(nodes[1], Torques[1])
-
-            
-            elif State == "flight":
-                set_position_control_mode(nodes[0])
-                set_position_control_mode(nodes[1])
-                State_Machine.flight()
-                set_position(nodes[0], motor1_pos)
-                set_position(nodes[1], motor2_pos)
-
-
-            else:
-                print("Phase state could not be determined.")
-                
-        #Redfine the inital motor positions
-        Initial_Centerbar_Length = Centerbar_Length
-        Start_Time = New_Time
-    if args.mode == "Dropping":
-        while True: 
-            print("I'm falling :o")
-
-    if args.mode == "Dynamic Probing":
-        while True: 
-            print("I'm probing ;)")
-
-    if args.mode == "Static Probing":
-        while True: 
-            print("I'm probing some more ;)")
 
