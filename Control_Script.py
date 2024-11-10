@@ -42,21 +42,21 @@ class Hopper_State_Machine:
         
     
     def get_state(self, motor1_encoder_estimate, motor2_encoder_estimate, latch_status):
-        extension_limit_value = 0.075
-        compression_limit_value = 0.35
-        offset = 0.045
+        extension_limit_value = -0.35
+        compression_limit_value = -0.1
+        #offset = 0.045
         
         if latch_status == 0: 
             return "idle"
         
         elif latch_status == 1:
-            if (motor1_encoder_estimate >= extension_limit_value) and (motor2_encoder_estimate >= extension_limit_value + offset): 
+            if (motor1_encoder_estimate <= extension_limit_value) and (motor2_encoder_estimate <= extension_limit_value): 
                 return "flight"       
                 
-            elif (motor1_encoder_estimate > compression_limit_value and motor1_encoder_estimate < extension_limit_value) and (motor2_encoder_estimate > compression_limit_value + offset and motor2_encoder_estimate < extension_limit_value + offset):
+            elif (motor1_encoder_estimate < compression_limit_value and motor1_encoder_estimate > extension_limit_value) and (motor2_encoder_estimate < compression_limit_value and motor2_encoder_estimate > extension_limit_value):
                 return "compression"
                 
-            elif (motor1_encoder_estimate <= compression_limit_value) and (motor2_encoder_estimate <= compression_limit_value + offset):
+            elif (motor1_encoder_estimate >= compression_limit_value) and (motor2_encoder_estimate >= compression_limit_value):
                 return "extension"
                 
             else:
@@ -65,17 +65,19 @@ class Hopper_State_Machine:
 
 
 def get_leg_geometry(Phi_1, Phi_2):
+    reference_point = -0.15
     #Converting the absolute encoder estimated into radians with refernce the the vertical axis (this is need as it was the way the jacobian was derived)
-    Phi_2 = (math.pi/2) + ((0.225+0.045 - Phi_2) * (math.pi*2))
-    Phi_1 = ((3*math.pi)/2) - ((0.225 - Phi_1) * (math.pi*2))
+    phi_2 = (math.pi/2) - ((Phi_2 - reference_point) * (math.pi*2))
+    phi_1 = ((3*math.pi)/2) + ((Phi_1 - reference_point) * (math.pi*2))
+    #phi1 and phi2 are actually swithched in our set up when comparing it to the derived kinematics
     
-    Upper_Link_Len = 100 #mm
-    Lower_Link_Len = 200 #mm
-    Toe_Len = 47.5 #mm
-    theta = 0.5*(Phi_1 + Phi_2)
-    gamma = 0.5*(Phi_2 - Phi_1)
-    length = Toe_Len + Upper_Link_Len*math.cos(gamma) + math.sqrt((Lower_Link_Len)**2 + (Upper_Link_Len)**2*(math.sin(gamma)**2))
-    beta = -Upper_Link_Len*math.sin(gamma)*(1 + ((Upper_Link_Len * math.cos(gamma))/math.sqrt((Lower_Link_Len)**2 - (Upper_Link_Len)**2*math.sin(gamma)**2)))
+    Upper_Link_Len = 0.100 #m
+    Lower_Link_Len = 0.200 #m
+    Toe_Len = 0.0475 #m
+    theta = 0.5*(phi_1 + phi_2)
+    gamma = 0.5*(-phi_2 + phi_1)
+    length = Toe_Len + Upper_Link_Len*math.cos(gamma) + math.sqrt((Lower_Link_Len)**2 - (Upper_Link_Len**2)*(math.sin(gamma)**2))
+    beta = -Upper_Link_Len*math.sin(gamma)*(1 + ((Upper_Link_Len * math.cos(gamma))/math.sqrt((Lower_Link_Len)**2 - ((Upper_Link_Len)**2)*(math.sin(gamma)**2))))
     Leg_Geometry_Dict = {
         "Leg Length": length,
         "Leg Angle": theta, 
@@ -157,15 +159,16 @@ def set_idle(node_id):
 
 def get_pos_estimate(node_id):
     
+   # Send read command
     bus.send(can.Message(
-        arbitration_id=(node_id << 5 | 0x09), # 0x04: RxSdo
-        data=b'',
+        arbitration_id=(node_id << 5 | 0x04), # 0x04: RxSdo
+        data=struct.pack('<BHB', OPCODE_READ, 195, 0),
         is_extended_id=False
     ))
     
     # Await reply
     for msg in bus:
-        if msg.arbitration_id == (node_id << 5 | 0x09): # 0x05: TxSdo
+        if msg.arbitration_id == (node_id << 5 | 0x05): # 0x05: TxSdo
             break
     # Unpack and print reply
     _, _, _, pos_return_value = struct.unpack_from('<BHB' + 'f', msg.data)
@@ -201,6 +204,9 @@ if __name__ == "__main__":
     
     bus = can.interface.Bus("can0", interface="socketcan")
     
+    OPCODE_READ = 0x00
+    OPCODE_WRITE = 0x01
+    
     # Flush CAN RX buffer so there are no more old pending messages
     while not (bus.recv(timeout=0) is None): 
         pass
@@ -225,9 +231,11 @@ if __name__ == "__main__":
     #Initalize the latch status 
     latch_status = 0
     #Check the hopping mode
-    set_position(nodes[0],0.225+0.045)
-    set_position(nodes[1],0.225)
-    time.sleep(1.5)
+    #set_position(nodes[0],0.225+0.045)
+    #set_position(nodes[1],0.225)
+    set_position(nodes[0],-0.15)
+    set_position(nodes[1],-0.15)
+    time.sleep(3)
 
 
     #Get the initial motor position estimates
@@ -253,10 +261,10 @@ if __name__ == "__main__":
         Leg_Geometry = get_leg_geometry(motor1_pos, motor2_pos)
         Toe_Position = FK(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"])
         Centerbar_Length = Toe_Position[1] 
-
+        #print(Leg_Geometry["Beta"])
         #Calculate the centerbar derivatice 
         Centerbar_Length_Deriv = (Initial_Centerbar_Length - Centerbar_Length)/(New_Time - Start_Time)
-        
+        time.sleep(1)
         if State == "idle":
             latch_status = 1
 
