@@ -28,13 +28,13 @@ class Hopper_State_Machine:
         self.state = "Idle"
 
     def compression(self):
-        self.Kc = -1
+        self.Kc = -30
         self.Cd = 1
         return 
 
     def extension(self):  
-        self.K_c = 1600
-        self.C_d = 1
+        self.Kc = -2000
+        self.Cd = 10
         return 
     
     def flight(self): #I know we discussed swithcing the spring stiffness during flight phase but it is already being switch once it enterss compression mode so do we need to switch if no torques are being applied?
@@ -42,7 +42,7 @@ class Hopper_State_Machine:
         
     
     def get_state(self, motor1_encoder_estimate, motor2_encoder_estimate, latch_status):
-        extension_limit_value = -0.35
+        extension_limit_value = -0.2
         compression_limit_value = -0.1
         #offset = 0.045
         
@@ -50,13 +50,13 @@ class Hopper_State_Machine:
             return "idle"
         
         elif latch_status == 1:
-            if (motor1_encoder_estimate <= extension_limit_value) and (motor2_encoder_estimate <= extension_limit_value): 
+            if (motor1_encoder_estimate <= extension_limit_value) or (motor2_encoder_estimate <= extension_limit_value): 
                 return "flight"       
                 
-            elif (motor1_encoder_estimate < compression_limit_value and motor1_encoder_estimate > extension_limit_value) and (motor2_encoder_estimate < compression_limit_value and motor2_encoder_estimate > extension_limit_value):
+            elif (motor1_encoder_estimate < compression_limit_value or motor1_encoder_estimate > extension_limit_value) and (motor2_encoder_estimate < compression_limit_value and motor2_encoder_estimate > extension_limit_value):
                 return "compression"
                 
-            elif (motor1_encoder_estimate >= compression_limit_value) and (motor2_encoder_estimate >= compression_limit_value):
+            elif (motor1_encoder_estimate >= compression_limit_value) or (motor2_encoder_estimate >= compression_limit_value):
                 return "extension"
                 
             else:
@@ -256,15 +256,15 @@ if __name__ == "__main__":
         #Check the system state
         State =  State_Machine.get_state(motor1_pos, motor2_pos, latch_status)
         print(State)
-
+        
         #Calculate the length of the centerbar length 
         Leg_Geometry = get_leg_geometry(motor1_pos, motor2_pos)
         Toe_Position = FK(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"])
-        Centerbar_Length = Toe_Position[1] 
-        #print(Leg_Geometry["Beta"])
+        Centerbar_Length = Toe_Position[1]
+        
         #Calculate the centerbar derivatice 
         Centerbar_Length_Deriv = (Initial_Centerbar_Length - Centerbar_Length)/(New_Time - Start_Time)
-        time.sleep(1)
+        time.sleep(0.01)
         if State == "idle":
             latch_status = 1
 
@@ -275,8 +275,9 @@ if __name__ == "__main__":
             Force = get_desired_force(State_Machine.Kc, State_Machine.Cd, Centerbar_Length, Centerbar_Length_Deriv)
             Jacobian = get_Jacobian(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"], Leg_Geometry["Beta"])
             Torques = get_Torques(Jacobian, [[0],[Force]])
+            print(Torques)
             set_torque(nodes[0], Torques[0])
-            set_torque(nodes[1], Torques[1])
+            set_torque(nodes[1], -Torques[1])
 
 
         elif State == "extension":
@@ -286,7 +287,8 @@ if __name__ == "__main__":
             Force = get_desired_force(State_Machine.Kc, State_Machine.Cd, Centerbar_Length, Centerbar_Length_Deriv)
             Jacobian = get_Jacobian(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"], Leg_Geometry["Beta"])
             Torques = get_Torques(Jacobian, [[0],[Force]])
-            set_torque(nodes[0], -Torques[0])
+            print(Torques)
+            set_torque(nodes[0], Torques[0])
             set_torque(nodes[1], -Torques[1])
 
         
@@ -294,12 +296,13 @@ if __name__ == "__main__":
             set_position_control_mode(nodes[0])
             set_position_control_mode(nodes[1])
             State_Machine.flight()
-            set_position(nodes[0], motor1_pos)
+            set_position(nodes[0], motor1_pos - 0.04)
             set_position(nodes[1], motor2_pos)
 
 
         else:
             print("Phase state could not be determined.")
+            
             
     #Redfine the inital motor positions
     Initial_Centerbar_Length = Centerbar_Length

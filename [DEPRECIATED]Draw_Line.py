@@ -138,14 +138,14 @@ if __name__ == "__main__":
     set_position_control_mode(node_id_0)
     set_position_control_mode(node_id_1)
     
-    position = 0.05
-    offset = 0.045
+    position = -0.15
+    offset = 0
 #   ff_vel = 2000  # Increased velocity for faster response
 #   ff_torque = 30000  # Increased torque for greater force
     
     set_position(node_id_0, position + offset)
     set_position(node_id_1, position)
-    time.sleep(0.75)  # Reduced initial sleep time for faster oscillation start
+    time.sleep(10)  # Reduced initial sleep time for faster oscillation start
     
     oscilation_position = 0.05
     oscilation_num = 10  # Increase oscillation count
@@ -153,12 +153,12 @@ if __name__ == "__main__":
 
     oscilation_vector = [position if i % 2 == 0 else oscilation_position for i in range(oscilation_num)]
     
-    for oscilation in oscilation_vector:
-        set_position(node_id_0, oscilation + offset)
-        set_position(node_id_1, oscilation)
-        
-        print("oscilation")
-        time.sleep(oscilation_len)
+#     for oscilation in oscilation_vector:
+#         set_position(node_id_0, oscilation + offset)
+#         set_position(node_id_1, oscilation)
+#         
+#         print("oscilation")
+#         time.sleep(oscilation_len)
 
     
     time.sleep(0.5)
