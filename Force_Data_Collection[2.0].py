@@ -14,22 +14,22 @@ import pandas as pd
 def get_pos_estimate(node_id):
 
    # Send read command
-#     bus.send(can.Message(
-#         arbitration_id=(node_id << 5 | 0x04), # 0x04: RxSdo
-#         data=struct.pack('<BHB', OPCODE_READ, 195, 0),
-#         is_extended_id=False
-#     ))
-    
     bus.send(can.Message(
-        arbitration_id=(node_id << 5 | 0x09), # 0x04: RxSdo
-        data=b'',
+        arbitration_id=(node_id << 5 | 0x04), # 0x04: RxSdo
+        data=struct.pack('<BHB', OPCODE_READ, 195, 0),
         is_extended_id=False
     ))
+    
+#     bus.send(can.Message(
+#         arbitration_id=(node_id << 5 | 0x09), # 0x04: RxSdo
+#         data=b'',
+#         is_extended_id=False
+#     ))
     
     # Await reply
     #msg = bus.recv(0.0003)
     for msg in bus:
-        if msg.arbitration_id == (node_id << 5 | 0x09): # 0x05: TxSdo
+        if msg.arbitration_id == (node_id << 5 | 0x05): # 0x05: TxSdo
             break
     # Unpack and print reply
     _, _, _, pos_return_value = struct.unpack_from('<BHB' + 'f', msg.data)
@@ -42,22 +42,22 @@ def get_pos_estimate(node_id):
 def get_torque_estimate(node_id):
 
 #    # Send read command
-#     bus.send(can.Message(
-#         arbitration_id=(node_id << 5 | 0x04), # 0x04: RxSdo
-#         data=struct.pack('<BHB', OPCODE_READ, 363, 0),
-#         is_extended_id=False
-#     ))
-
     bus.send(can.Message(
-        arbitration_id=(node_id << 5 | 0x1c), 
-        data=b'',
+        arbitration_id=(node_id << 5 | 0x04), # 0x04: RxSdo
+        data=struct.pack('<BHB', OPCODE_READ, 363, 0),
         is_extended_id=False
     ))
+
+#     bus.send(can.Message(
+#         arbitration_id=(node_id << 5 | 0x1c), 
+#         data=b'',
+#         is_extended_id=False
+#     ))
     
     #Await reply
     #msg = bus.recv(0.0003)
     for msg in bus:
-        if msg.arbitration_id == (node_id << 5 | 0x1c): 
+        if msg.arbitration_id == (node_id << 5 | 0x05): 
             break
         
     # Unpack and print reply
@@ -67,7 +67,7 @@ def get_torque_estimate(node_id):
 
 
 #Set up file to save data 
-file_path = "/home/traveler/Downloads/Data/09:50:-11-7-24.csv"
+file_path = "/home/traveler/Downloads/Data/02:43:-11-10-24.csv"
 
 #define file header 
 csv_header = ['Time', 'Motor 0 Position', 'Motor 1 Position', 'Motor 0 Torque','Motor 1 Torque']
@@ -103,9 +103,8 @@ while not (bus.recv(timeout=0) is None): pass
 
 
 # Start time for logging
-time_zone = pytz.timezone("US/Pacific")
 data_buffer = []
-buffer_size = 1000
+buffer_size = 100000
 start_time = time.perf_counter()
 
 

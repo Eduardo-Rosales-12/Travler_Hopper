@@ -4,23 +4,29 @@ import math
 import numpy as np
 
 def get_leg_geometry(Phi_1, Phi_2):
-    Upper_Link_Len = 100.0 #mm
-    Lower_Link_Len = 200.0 #mm
-    Toe_Len = 47.5 #mm
-    theta = 0.5*(Phi_1 + Phi_2)
-    gamma = 0.5*(Phi_2 - Phi_1)
-    Len = Toe_Len + Upper_Link_Len*math.cos(gamma) + math.sqrt((Lower_Link_Len)**2 + (Upper_Link_Len)**2*(math.sin(gamma)**2))
-    beta = -Upper_Link_Len*math.sin(gamma)*(Len + ((Upper_Link_Len * math.cos(gamma))/math.sqrt((Lower_Link_Len)**2 - (Upper_Link_Len)**2*math.sin(gamma)**2)))
+    reference_point = -0.15
+    #Converting the absolute encoder estimated into radians with refernce the the vertical axis (this is need as it was the way the jacobian was derived)
+    phi_2 = (math.pi/2) - ((Phi_2 - reference_point) * (math.pi*2))
+    phi_1 = ((3*math.pi)/2) + ((Phi_1 - reference_point) * (math.pi*2))
+    #phi1 and phi2 are actually swithched in our set up when comparing it to the derived kinematics
+    
+    Upper_Link_Len = 0.100 #m
+    Lower_Link_Len = 0.200 #m
+    Toe_Len = 0.0475 #m
+    theta = 0.5*(phi_1 + phi_2)
+    gamma = 0.5*(-phi_2 + phi_1)
+    length = Toe_Len + Upper_Link_Len*math.cos(gamma) + math.sqrt((Lower_Link_Len)**2 - (Upper_Link_Len**2)*(math.sin(gamma)**2))
+    beta = -Upper_Link_Len*math.sin(gamma)*(1 + ((Upper_Link_Len * math.cos(gamma))/math.sqrt((Lower_Link_Len)**2 - ((Upper_Link_Len)**2)*(math.sin(gamma)**2))))
     Leg_Geometry_Dict = {
-        "Leg Length": Len,
+        "Leg Length": length,
         "Leg Angle": theta, 
         "Beta": beta
     }
     return Leg_Geometry_Dict
 
-def get_Jacobian(Len, theta, beta):
-    Jacobian = np.array([[0.5*(-beta*math.sin(theta) + Len*math.cos(theta)), 0.5*(beta*math.sin(theta) + Len*math.cos(theta))], 
-                         [ 0.5*(-beta *math.cos(theta) - Len*math.sin(theta)), 0.5*(beta*math.cos(theta) - Len*math.sin(theta))]])
+def get_Jacobian(length, theta, beta):
+    Jacobian = np.array([[0.5*(-beta*math.sin(theta) + length*math.cos(theta)), 0.5*(beta*math.sin(theta) + length*math.cos(theta))], 
+                         [ 0.5*(-beta *math.cos(theta) - length*math.sin(theta)), 0.5*(beta*math.cos(theta) - length*math.sin(theta))]])
     return Jacobian
 
 def get_Forces(Jacobian, Torques):
@@ -33,7 +39,7 @@ def get_Forces(Jacobian, Torques):
     return Force_Magnitude
 
 #Load CSV data
-csv_file = "Torque_and_Position_Data.csv"
+csv_file = "/home/traveler/Downloads/Data/02:43:-11-10-24.csv"
 data = pd.read_csv(csv_file)
 
 #Set X and Y values

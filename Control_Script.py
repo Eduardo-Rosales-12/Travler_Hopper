@@ -39,8 +39,7 @@ class Hopper_State_Machine:
         return 
     
     def flight(self): #I know we discussed swithcing the spring stiffness during flight phase but it is already being switch once it enterss compression mode so do we need to switch if no torques are being applied?
-        print("To Infinity and Beyond")
-        
+        return        
     
     def get_state(self, motor1_encoder_estimate, motor2_encoder_estimate, latch_status):
         extension_limit_value = -0.3
@@ -179,15 +178,15 @@ def get_pos_estimate(node_id):
 
 def get_torque_estimate(node_id):
 
+#    # Send read command
     bus.send(can.Message(
-        arbitration_id=(node_id << 5 | 0x1c), 
-        data=b'',
+        arbitration_id=(node_id << 5 | 0x04), # 0x04: RxSdo
+        data=struct.pack('<BHB', OPCODE_READ, 363, 0),
         is_extended_id=False
     ))
-    
-    #Await reply
+
     for msg in bus:
-        if msg.arbitration_id == (node_id << 5 | 0x1c): 
+        if msg.arbitration_id == (node_id << 5 | 0x05): 
             break
         
     # Unpack and print reply
@@ -259,17 +258,27 @@ if __name__ == "__main__":
     initial_motor1_pos = get_pos_estimate(nodes[0])
     initial_motor2_pos =get_pos_estimate(nodes[1])
     Start_Time = time.perf_counter()
+    Elapsed_Start_Time = time.perf_counter()
     
     Initial_Leg_Geometry_Estimate = get_leg_geometry(initial_motor1_pos, initial_motor2_pos)
     Initial_Toe_Position_Estimate = FK(Initial_Leg_Geometry_Estimate["Leg Length"], Initial_Leg_Geometry_Estimate["Leg Angle"])
     Initial_Centerbar_Length = Initial_Toe_Position_Estimate[1]
 
     while running:
+
         #grab initial motor position estimate 
         motor1_pos = get_pos_estimate(nodes[0])
         motor2_pos = get_pos_estimate(nodes[1])
-        New_Time = time.perf_counter()
+        motor1_tor = get_torque_estimate(nodes[0])
+        motor2_tor = get_torque_estimate(nodes[0])
         
+        #Determine elapsed time
+        New_Time = time.perf_counter()
+        elapsed_time = New_Time - Elapsed_Start_Time
+        
+        #Save Data
+        data_log.append([elapsed_time, motor1_pos, motor2_pos, motor1_tor, motor2_tor])
+
         #Check the system state
         State =  State_Machine.get_state(motor1_pos, motor2_pos, latch_status)
         print(State)
@@ -293,7 +302,6 @@ if __name__ == "__main__":
             Force = get_desired_force(State_Machine.Kc, State_Machine.Cd, Centerbar_Length, Centerbar_Length_Deriv)
             Jacobian = get_Jacobian(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"], Leg_Geometry["Beta"])
             Torques = get_Torques(Jacobian, [[0],[Force]])
-            print(Torques)
             set_torque(nodes[0], Torques[0])
             set_torque(nodes[1], -Torques[1])
 
@@ -305,7 +313,6 @@ if __name__ == "__main__":
             Force = get_desired_force(State_Machine.Kc, State_Machine.Cd, Centerbar_Length, Centerbar_Length_Deriv)
             Jacobian = get_Jacobian(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"], Leg_Geometry["Beta"])
             Torques = get_Torques(Jacobian, [[0],[Force]])
-            print(Torques)
             set_torque(nodes[0], Torques[0])
             set_torque(nodes[1], -Torques[1])
 
@@ -323,9 +330,6 @@ if __name__ == "__main__":
             
         else:
             print("Phase state could not be determined.")
-        
-
-            
             
     #Redfine the inital motor positions
     Initial_Centerbar_Length = Centerbar_Length
@@ -333,7 +337,6 @@ if __name__ == "__main__":
     
 listener.join()
 
-print("Script has ended")
 set_position_control_mode(nodes[0])
 set_position_control_mode(nodes[1])
 set_position(nodes[0], initial_position)
@@ -341,3 +344,24 @@ set_position(nodes[1], initial_position)
 time.sleep(1)
 set_idle(nodes[0])
 set_idle(nodes[1])
+print("Motion Terminated")
+
+#Set up file to save data 
+file_path = "/home/traveler/Downloads/Data/02:43:-11-10-24.csv"
+
+#Start Logging Data
+print("Saving Data to: " + file_path)
+
+#define file header 
+csv_header = ['Time', 'Motor 0 Position', 'Motor 1 Position', 'Motor 0 Torque','Motor 1 Torque']
+
+with open(file_path, mode='w', newline='') as file:
+    writer = csv.writer(file)
+    writer.writerow(csv_header)
+    
+with open(file_path, mode='a', newline='') as file:
+    writer = csv.writer(file)
+    writer.writerows(data)
+print("Save Complete")
+
+    
