@@ -138,8 +138,8 @@ if __name__ == "__main__":
     set_position_control_mode(node_id_0)
     set_position_control_mode(node_id_1)
     
-    position = -0.15
-    offset = 0
+    position = -0.35
+    offset = 0.023
 #   ff_vel = 2000  # Increased velocity for faster response
 #   ff_torque = 30000  # Increased torque for greater force
     

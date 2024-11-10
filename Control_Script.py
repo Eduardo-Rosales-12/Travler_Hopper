@@ -7,6 +7,7 @@ import math
 import argparse
 from odrive.enums import *
 import matplotlib.pyplot as plt
+from pynput import keyboard
 
 class PDController:
     def __init__(self, Kp, Kd):
@@ -42,7 +43,7 @@ class Hopper_State_Machine:
         
     
     def get_state(self, motor1_encoder_estimate, motor2_encoder_estimate, latch_status):
-        extension_limit_value = -0.2
+        extension_limit_value = -0.3
         compression_limit_value = -0.1
         #offset = 0.045
         
@@ -198,7 +199,21 @@ def get_desired_force(K_spring, K_damping, centerbar_length, centerbar_length_de
     Force = K_spring * centerbar_length + K_damping* centerbar_length_deriv
     return Force 
 
+def on_press(key):
+    global running
+    try:
+        if key.char == 'q':
+            print("Stop Running Script")
+            running = False
+            return False
+    except AttributeError:
+        pass
+        
 if __name__ == "__main__":
+    #Set up keyboard listener
+    listener = keyboard.Listener(on_press=on_press)
+    listener.start()
+    running = True 
 
     nodes = [0, 1]  # Node IDs for node 0 and node 1
     
@@ -228,13 +243,15 @@ if __name__ == "__main__":
     #Initalize stat object 
     State_Machine = Hopper_State_Machine(0,0)
 
+    #Initalizing Toe Position PD controller
+    Toe_Position_Controller = PDController(0.5, 1)
+    
     #Initalize the latch status 
     latch_status = 0
     #Check the hopping mode
-    #set_position(nodes[0],0.225+0.045)
-    #set_position(nodes[1],0.225)
-    set_position(nodes[0],-0.15)
-    set_position(nodes[1],-0.15)
+    initial_position = -0.15
+    set_position(nodes[0],initial_position)
+    set_position(nodes[1],initial_position)
     time.sleep(3)
 
 
@@ -247,7 +264,7 @@ if __name__ == "__main__":
     Initial_Toe_Position_Estimate = FK(Initial_Leg_Geometry_Estimate["Leg Length"], Initial_Leg_Geometry_Estimate["Leg Angle"])
     Initial_Centerbar_Length = Initial_Toe_Position_Estimate[1]
 
-    while True:
+    while running:
         #grab initial motor position estimate 
         motor1_pos = get_pos_estimate(nodes[0])
         motor2_pos = get_pos_estimate(nodes[1])
@@ -265,6 +282,7 @@ if __name__ == "__main__":
         #Calculate the centerbar derivatice 
         Centerbar_Length_Deriv = (Initial_Centerbar_Length - Centerbar_Length)/(New_Time - Start_Time)
         time.sleep(0.01)
+        
         if State == "idle":
             latch_status = 1
 
@@ -293,19 +311,33 @@ if __name__ == "__main__":
 
         
         elif State == "flight":
+            extension_limit_value = -0.3
+            dt = New_Time - Start_Time
             set_position_control_mode(nodes[0])
             set_position_control_mode(nodes[1])
             State_Machine.flight()
-            set_position(nodes[0], motor1_pos - 0.04)
-            set_position(nodes[1], motor2_pos)
-
-
+            #compensated_motor1_position = Toe_Position_Controller.update(extension_limit_value, motor1_pos, dt)
+            #compensated_motor2_position = Toe_Position_Controller.update(extension_limit_value, motor2_pos, dt)
+            set_position(nodes[0], extension_limit_value + 0.02)
+            set_position(nodes[1], extension_limit_value)
+            
         else:
             print("Phase state could not be determined.")
+        
+
             
             
     #Redfine the inital motor positions
     Initial_Centerbar_Length = Centerbar_Length
     Start_Time = New_Time
+    
+listener.join()
 
-
+print("Script has ended")
+set_position_control_mode(nodes[0])
+set_position_control_mode(nodes[1])
+set_position(nodes[0], initial_position)
+set_position(nodes[1], initial_position)
+time.sleep(1)
+set_idle(nodes[0])
+set_idle(nodes[1])
