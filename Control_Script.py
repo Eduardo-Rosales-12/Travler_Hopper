@@ -8,6 +8,7 @@ import argparse
 from odrive.enums import *
 import matplotlib.pyplot as plt
 from pynput import keyboard
+import csv 
 
 class PDController:
     def __init__(self, Kp, Kd):
@@ -160,18 +161,26 @@ def set_idle(node_id):
 def get_pos_estimate(node_id):
     
    # Send read command
+#     bus.send(can.Message(
+#         arbitration_id=(node_id << 5 | 0x04), # 0x04: RxSdo
+#         data=struct.pack('<BHB', OPCODE_READ, 195, 0),
+#         is_extended_id=False
+#     ))
+    
     bus.send(can.Message(
-        arbitration_id=(node_id << 5 | 0x04), # 0x04: RxSdo
-        data=struct.pack('<BHB', OPCODE_READ, 195, 0),
+        arbitration_id=(node_id << 5 | 0x09), # 0x04: RxSdo
+        data=b'',
         is_extended_id=False
     ))
-    
+
     # Await reply
     for msg in bus:
-        if msg.arbitration_id == (node_id << 5 | 0x05): # 0x05: TxSdo
+        if msg.arbitration_id == (node_id << 5 | 0x09): # 0x05: TxSdo
             break
     # Unpack and print reply
-    _, _, _, pos_return_value = struct.unpack_from('<BHB' + 'f', msg.data)
+    #_, _, _, pos_return_value = struct.unpack_from('<BHB' + 'f', msg.data)
+    pos_return_value, vel_return_value = struct.unpack_from('<ff', msg.data)
+
     
 
     return pos_return_value
@@ -179,19 +188,27 @@ def get_pos_estimate(node_id):
 def get_torque_estimate(node_id):
 
 #    # Send read command
+#     bus.send(can.Message(
+#         arbitration_id=(node_id << 5 | 0x04), # 0x04: RxSdo
+#         data=struct.pack('<BHB', OPCODE_READ, 363, 0),
+#         is_extended_id=False
+#     ))
+
     bus.send(can.Message(
-        arbitration_id=(node_id << 5 | 0x04), # 0x04: RxSdo
-        data=struct.pack('<BHB', OPCODE_READ, 363, 0),
+        arbitration_id=(node_id << 5 | 0x1c), 
+        data=b'',
         is_extended_id=False
     ))
 
     for msg in bus:
-        if msg.arbitration_id == (node_id << 5 | 0x05): 
+        if msg.arbitration_id == (node_id << 5 | 0x1c): 
             break
         
     # Unpack and print reply
-    _, _, _, torque_return_value = struct.unpack_from('<BHB' + 'f', msg.data)
+   # _, _, _, torque_return_value = struct.unpack_from('<BHB' + 'f', msg.data)
     
+    torque_target, torque_return_value = struct.unpack_from('<ff', msg.data)
+
     return torque_return_value
 
 def get_desired_force(K_spring, K_damping, centerbar_length, centerbar_length_deriv):
@@ -247,13 +264,16 @@ if __name__ == "__main__":
     
     #Initalize the latch status 
     latch_status = 0
+    
     #Check the hopping mode
     initial_position = -0.15
     set_position(nodes[0],initial_position)
     set_position(nodes[1],initial_position)
     time.sleep(3)
 
-
+    #Setup data log
+    data_log = []
+    
     #Get the initial motor position estimates
     initial_motor1_pos = get_pos_estimate(nodes[0])
     initial_motor2_pos =get_pos_estimate(nodes[1])
@@ -290,7 +310,7 @@ if __name__ == "__main__":
         
         #Calculate the centerbar derivatice 
         Centerbar_Length_Deriv = (Initial_Centerbar_Length - Centerbar_Length)/(New_Time - Start_Time)
-        time.sleep(0.01)
+        #qtime.sleep(0.001)
         
         if State == "idle":
             latch_status = 1
@@ -347,13 +367,13 @@ set_idle(nodes[1])
 print("Motion Terminated")
 
 #Set up file to save data 
-file_path = "/home/traveler/Downloads/Data/02:43:-11-10-24.csv"
+file_path = "/home/traveler/Downloads/Data/04:05:-11-10-24.csv"
 
 #Start Logging Data
 print("Saving Data to: " + file_path)
 
 #define file header 
-csv_header = ['Time', 'Motor 0 Position', 'Motor 1 Position', 'Motor 0 Torque','Motor 1 Torque']
+csv_header = ['Time', 'Motor 0 Position', 'Motor 1 Position', 'Motor 0 Torque','Motor 1 Torque', 'Force']
 
 with open(file_path, mode='w', newline='') as file:
     writer = csv.writer(file)
@@ -361,7 +381,6 @@ with open(file_path, mode='w', newline='') as file:
     
 with open(file_path, mode='a', newline='') as file:
     writer = csv.writer(file)
-    writer.writerows(data)
+    writer.writerows(data_log)
 print("Save Complete")
 
-    

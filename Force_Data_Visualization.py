@@ -39,14 +39,15 @@ def get_Forces(Jacobian, Torques):
     return Force_Magnitude
 
 #Load CSV data
-csv_file = "/home/traveler/Downloads/Data/02:43:-11-10-24.csv"
+csv_file = "/home/traveler/Downloads/Data/04:05:-11-10-24.csv"
 data = pd.read_csv(csv_file)
 
 #Set X and Y values
 x = data['Time']
 
-y1 = data['Motor 0 Position'] / (2*math.pi)
-y2 = data['Motor 1 Position'] / (2*math.pi)
+y1 = data['Motor 0 Position'] 
+y2 = data['Motor 1 Position'] 
+
 
 Leg_Geometry_List = np.array([])
 
