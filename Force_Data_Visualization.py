@@ -4,14 +4,14 @@ import math
 import numpy as np
 
 def get_leg_geometry(Phi_1, Phi_2):
-    reference_point = -0.15
+    reference_point = 0.25
     #Converting the absolute encoder estimated into radians with refernce the the vertical axis (this is need as it was the way the jacobian was derived)
-    phi_2 = (math.pi/2) - ((Phi_2 - reference_point) * (math.pi*2))
+    phi_2 = (math.pi/2) + ((reference_point - Phi_2) * (math.pi*2))
     phi_1 = ((3*math.pi)/2) + ((Phi_1 - reference_point) * (math.pi*2))
-    #phi1 and phi2 are actually swithched in our set up when comparing it to the derived kinematics
     
+    #phi1 and phi2 are actually swithched in our set up when comparing it to the derived kinematics
     Upper_Link_Len = 0.100 #m
-    Lower_Link_Len = 0.200 #m
+    Lower_Link_Len = 0.200 #mqq
     Toe_Len = 0.0475 #m
     theta = 0.5*(phi_1 + phi_2)
     gamma = 0.5*(-phi_2 + phi_1)

@@ -72,12 +72,12 @@ for node_id in nodes:
             error, state, result, traj_done = struct.unpack('<IBBB', bytes(msg.data[:7]))
             if state == 8:  # 8: AxisState.CLOSED_LOOP_CONTROL
                 break
-torque_command = 0.2  # Torque value to set for each node
+torque_command = -1.2  # Torque value to set for each node
            
 #set the position origin
-set_position(nodes[0], 0.2, 100, 100)
-set_position(nodes[1], 0.2, 100, 100)
-time.sleep(5)
+set_position(nodes[0], -0.25, 100, 100)
+set_position(nodes[1], -0.275, 100, 100)
+time.sleep(2)
 
 # Put each node into closed loop control mode
 for node_id in nodes:

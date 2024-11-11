@@ -117,8 +117,8 @@ path_vel = 'axis0.controller.config.vel_gain'
 path_int = 'axis0.controller.config.vel_integrator_gain'
 path_save_config = 'save_configuration'
 
-pos_gain = 100
-vel_gain = 1
+pos_gain = 130
+vel_gain = 1.2
 int_gain = 0
 
 # Write gains and save for each motor

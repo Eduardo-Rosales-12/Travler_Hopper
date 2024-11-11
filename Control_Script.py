@@ -14,12 +14,10 @@ class PDController:
     def __init__(self, Kp, Kd):
         self.Kp = Kp
         self.Kd = Kd
-        self.previous_error = 0
 
-    def update(self, target_val, measured_val, dt):
+    def update(self, target_val, measured_val, deriv):
         Proportional_Error = target_val - measured_val
-        Derivative_Error = (Proportional_Error - self.previous_error)/dt
-        self.previous_error = Proportional_Error
+        Derivative_Error = deriv
         Corrected_Signal = self.Kp * Proportional_Error + self.Kd * Derivative_Error
         return Corrected_Signal
 
@@ -30,23 +28,24 @@ class Hopper_State_Machine:
         self.state = "Idle"
 
     def compression(self):
-        self.Kc = -30
+        self.Kc = -1
         self.Cd = 1
         return 
 
     def extension(self):  
-        self.Kc = -2000
-        self.Cd = 10
+        self.Kc = -800
+        self.Cd = 1
         return 
     
     def flight(self): #I know we discussed swithcing the spring stiffness during flight phase but it is already being switch once it enterss compression mode so do we need to switch if no torques are being applied?
         return        
+ 
     
-    def get_state(self, motor1_encoder_estimate, motor2_encoder_estimate, latch_status):
-        extension_limit_value = -0.3
-        compression_limit_value = -0.1
+    def get_state(self, motor1_encoder_estimate, motor2_encoder_estimate, Extension_Tracker, latch_status):
+        extension_limit_value = 0.05
+        compression_limit_value = 0.3
         #offset = 0.045
-        
+        print(motor1_encoder_estimate)
         if latch_status == 0: 
             return "idle"
         
@@ -54,10 +53,15 @@ class Hopper_State_Machine:
             if (motor1_encoder_estimate <= extension_limit_value) or (motor2_encoder_estimate <= extension_limit_value): 
                 return "flight"       
                 
-            elif (motor1_encoder_estimate < compression_limit_value or motor1_encoder_estimate > extension_limit_value) and (motor2_encoder_estimate < compression_limit_value and motor2_encoder_estimate > extension_limit_value):
-                return "compression"
+            if (motor1_encoder_estimate < compression_limit_value and motor1_encoder_estimate > extension_limit_value) or (motor2_encoder_estimate < compression_limit_value and motor2_encoder_estimate > extension_limit_value):
                 
-            elif (motor1_encoder_estimate >= compression_limit_value) or (motor2_encoder_estimate >= compression_limit_value):
+                if (Extension_Tracker == False):
+                    return "compression"
+                
+                else:
+                    return "extension"
+                
+            if (motor1_encoder_estimate >= compression_limit_value) or (motor2_encoder_estimate >= compression_limit_value):
                 return "extension"
                 
             else:
@@ -66,14 +70,14 @@ class Hopper_State_Machine:
 
 
 def get_leg_geometry(Phi_1, Phi_2):
-    reference_point = -0.15
+    reference_point = 0.25
     #Converting the absolute encoder estimated into radians with refernce the the vertical axis (this is need as it was the way the jacobian was derived)
-    phi_2 = (math.pi/2) - ((Phi_2 - reference_point) * (math.pi*2))
+    phi_2 = (math.pi/2) + ((reference_point - Phi_2) * (math.pi*2))
     phi_1 = ((3*math.pi)/2) + ((Phi_1 - reference_point) * (math.pi*2))
-    #phi1 and phi2 are actually swithched in our set up when comparing it to the derived kinematics
     
+    #phi1 and phi2 are actually swithched in our set up when comparing it to the derived kinematics
     Upper_Link_Len = 0.100 #m
-    Lower_Link_Len = 0.200 #m
+    Lower_Link_Len = 0.200 #mqq
     Toe_Len = 0.0475 #m
     theta = 0.5*(phi_1 + phi_2)
     gamma = 0.5*(-phi_2 + phi_1)
@@ -183,7 +187,7 @@ def get_pos_estimate(node_id):
 
     
 
-    return pos_return_value
+    return pos_return_value, vel_return_value
 
 def get_torque_estimate(node_id):
 
@@ -260,30 +264,39 @@ if __name__ == "__main__":
     State_Machine = Hopper_State_Machine(0,0)
 
     #Initalizing Toe Position PD controller
-    Toe_Position_Controller = PDController(0.5, 1)
+    Toe_Position_Controller = PDController(3, 0.08)
     
     #Initalize the latch status 
     latch_status = 0
     
     #Check the hopping mode
-    initial_position = -0.15
-    set_position(nodes[0],initial_position)
+    initial_position = 0.25
+    offset = 0.02
+    set_position(nodes[0],initial_position - offset)
     set_position(nodes[1],initial_position)
     time.sleep(3)
 
     #Setup data log
     data_log = []
     
+    #State_Vector
+    State_Vector = []
     #Get the initial motor position estimates
     initial_motor1_pos = get_pos_estimate(nodes[0])
     initial_motor2_pos =get_pos_estimate(nodes[1])
     Start_Time = time.perf_counter()
     Elapsed_Start_Time = time.perf_counter()
     
-    Initial_Leg_Geometry_Estimate = get_leg_geometry(initial_motor1_pos, initial_motor2_pos)
+    Initial_Leg_Geometry_Estimate = get_leg_geometry(initial_motor1_pos[0], initial_motor2_pos[0])
     Initial_Toe_Position_Estimate = FK(Initial_Leg_Geometry_Estimate["Leg Length"], Initial_Leg_Geometry_Estimate["Leg Angle"])
     Initial_Centerbar_Length = Initial_Toe_Position_Estimate[1]
-
+    initial_centerbar_length_condition = 0
+    #Initalize Flight Tracker
+    Flight_Tracker = 0
+    
+    #Initialize the extension tracker
+    Extension_Tracker = False
+    
     while running:
 
         #grab initial motor position estimate 
@@ -297,20 +310,22 @@ if __name__ == "__main__":
         elapsed_time = New_Time - Elapsed_Start_Time
         
         #Save Data
-        data_log.append([elapsed_time, motor1_pos, motor2_pos, motor1_tor, motor2_tor])
+        data_log.append([elapsed_time, motor1_pos[0], motor2_pos[0], motor1_tor, motor2_tor])
 
-        #Check the system state
-        State =  State_Machine.get_state(motor1_pos, motor2_pos, latch_status)
-        print(State)
+        
         
         #Calculate the length of the centerbar length 
-        Leg_Geometry = get_leg_geometry(motor1_pos, motor2_pos)
+        Leg_Geometry = get_leg_geometry(motor1_pos[0], motor2_pos[0])
         Toe_Position = FK(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"])
         Centerbar_Length = Toe_Position[1]
         
         #Calculate the centerbar derivatice 
         Centerbar_Length_Deriv = (Initial_Centerbar_Length - Centerbar_Length)/(New_Time - Start_Time)
         #qtime.sleep(0.001)
+        #Check the system state
+        State =  State_Machine.get_state(motor1_pos[0], motor2_pos[0], Extension_Tracker, latch_status)
+        print(State)
+        State_Vector.append(State)
         
         if State == "idle":
             latch_status = 1
@@ -322,38 +337,79 @@ if __name__ == "__main__":
             Force = get_desired_force(State_Machine.Kc, State_Machine.Cd, Centerbar_Length, Centerbar_Length_Deriv)
             Jacobian = get_Jacobian(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"], Leg_Geometry["Beta"])
             Torques = get_Torques(Jacobian, [[0],[Force]])
+            print(Torques)
             set_torque(nodes[0], Torques[0])
             set_torque(nodes[1], -Torques[1])
+            Flight_Tracker = 0
 
 
         elif State == "extension":
+            if State_Vector[-2] == "compression":
+                set_torque_control_mode(nodes[0])
+                set_torque_control_mode(nodes[1])
+                State_Machine.extension()
+                Force = get_desired_force(State_Machine.Kc, State_Machine.Cd, Centerbar_Length, Centerbar_Length_Deriv)
+                Jacobian = get_Jacobian(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"], Leg_Geometry["Beta"])
+                initial_centerbar_length_condition = Leg_Geometry["Leg Length"]
+                Torques = get_Torques(Jacobian, [[0],[Force]])
+                #print(Torques)
+                set_torque(nodes[0], Torques[0])
+                set_torque(nodes[1], -Torques[1])
+                Flight_Tracker = 0
+                Extension_Tracker = True
+                
             set_torque_control_mode(nodes[0])
             set_torque_control_mode(nodes[1])
             State_Machine.extension()
             Force = get_desired_force(State_Machine.Kc, State_Machine.Cd, Centerbar_Length, Centerbar_Length_Deriv)
             Jacobian = get_Jacobian(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"], Leg_Geometry["Beta"])
+            New_centerbar_length_condition = Leg_Geometry["Leg Length"]
             Torques = get_Torques(Jacobian, [[0],[Force]])
+            #print(Torques)
             set_torque(nodes[0], Torques[0])
             set_torque(nodes[1], -Torques[1])
+            Flight_Tracker = 0
+                
+            if (New_centerbar_length_condition - initial_centerbar_length_condition > 0.15q):
+                print(New_centerbar_length_condition - initial_centerbar_length_condition)
+                Extension_Tracker = False
+                
+            
 
         
         elif State == "flight":
-            extension_limit_value = -0.3
-            dt = New_Time - Start_Time
+            extension_limit = 0.015
+            State_Machine.flight()
             set_position_control_mode(nodes[0])
             set_position_control_mode(nodes[1])
-            State_Machine.flight()
-            #compensated_motor1_position = Toe_Position_Controller.update(extension_limit_value, motor1_pos, dt)
-            #compensated_motor2_position = Toe_Position_Controller.update(extension_limit_value, motor2_pos, dt)
-            set_position(nodes[0], extension_limit_value + 0.02)
-            set_position(nodes[1], extension_limit_value)
+            set_position(nodes[0], extension_limit - offset)
+            set_position(nodes[1], extension_limit)
+
+#             if Flight_Tracker > 0:
+#                 compensated_motor1_torque = Toe_Position_Controller.update(Motor1_Target_Position, motor1_pos[0], Motor1_Velocity)
+#                 compensated_motor2_torque = Toe_Position_Controller.update(Motor2_Target_Position, motor2_pos[0], Motor2_Velocity)
+#                 set_torque(nodes[0], compensated_motor1_torque)
+#                 set_torque(nodes[1], compensated_motor2_torque)
+#                 
+#             elif Flight_Tracker == 0:
+#                 Motor1_Target_Position = motor1_pos[0]
+#                 Motor2_Target_Position = motor2_pos[0]
+#                 Motor1_Velocity = motor1_pos[1]
+#                 Motor2_Velocity = motor2_pos[1]
+#                 compensated_motor1_torque = Toe_Position_Controller.update(Motor1_Target_Position, motor1_pos[0], Motor1_Velocity)
+#                 compensated_motor2_torque = Toe_Position_Controller.update(Motor2_Target_Position, motor2_pos[0], Motor2_Velocity)
+#                 set_torque(nodes[0], compensated_motor1_torque)
+#                 set_torque(nodes[1], compensated_motor2_torque)
+#                 Flight_Tracker = 1
+                
+ 
             
         else:
             print("Phase state could not be determined.")
             
     #Redfine the inital motor positions
-    Initial_Centerbar_Length = Centerbar_Length
-    Start_Time = New_Time
+        Initial_Centerbar_Length = Centerbar_Length
+        Start_Time = New_Time
     
 listener.join()
 
