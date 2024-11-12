@@ -260,7 +260,7 @@ if __name__ == "__main__":
                 if state == 8:  # 8: AxisState.CLOSED_LOOP_CONTROL
                     break
 
-    #Initalize stat object 
+    #Initalize state object 
     State_Machine = Hopper_State_Machine(0,0)
 
     #Initalizing Toe Position PD controller
@@ -271,7 +271,7 @@ if __name__ == "__main__":
     
     #Check the hopping mode
     initial_position = 0.25
-    offset = 0.02
+    offset = 0.015
     set_position(nodes[0],initial_position - offset)
     set_position(nodes[1],initial_position)
     time.sleep(3)
@@ -370,7 +370,7 @@ if __name__ == "__main__":
             set_torque(nodes[1], -Torques[1])
             Flight_Tracker = 0
                 
-            if (New_centerbar_length_condition - initial_centerbar_length_condition > 0.15q):
+            if (New_centerbar_length_condition - initial_centerbar_length_condition > 0.15):
                 print(New_centerbar_length_condition - initial_centerbar_length_condition)
                 Extension_Tracker = False
                 
@@ -378,7 +378,7 @@ if __name__ == "__main__":
 
         
         elif State == "flight":
-            extension_limit = 0.015
+            extension_limit = 0.05
             State_Machine.flight()
             set_position_control_mode(nodes[0])
             set_position_control_mode(nodes[1])

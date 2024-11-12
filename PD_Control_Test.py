@@ -1,21 +1,20 @@
 import can
 import struct
 import time
+import math
+import numpy as np
 
-# Define gains for position and velocity controllers
-pos_gain = 3
-vel_gain = 0.08
-vel_integrator_gain = 0.1
+class PDController:
+    def __init__(self, Kp, Kd):
+        self.Kp = Kp
+        self.Kd = Kd
 
-nodes = [0, 1]  # Node IDs for node 0 and node 1
-desired_position = 0.33  # Desired position for hopping motion
-target_position = 0.0  # Target position to hold
-bus = can.interface.Bus("can0", interface="socketcan")
-
-# Flush CAN RX buffer so there are no more old pending messages
-while not (bus.recv(timeout=0) is None):
-    pass
-
+    def update(self, target_val, measured_val, deriv):
+        Proportional_Error = target_val - measured_val
+        Derivative_Error = deriv
+        Corrected_Signal = self.Kp * Proportional_Error + self.Kd * Derivative_Error
+        return Corrected_Signal
+    
 def set_closed_loop_control(node_id):
     bus.send(can.Message(
         arbitration_id=(node_id << 5 | 0x07),
@@ -70,80 +69,91 @@ def encoder_estimates(node_id):
             pos_return_value, vel_return_value = struct.unpack_from('<ff', msg.data)
             return pos_return_value, vel_return_value
         
-# Cascade control structure with position and velocity loops
-def cascade_control(current_position, current_velocity, pos_setpoint, vel_feedforward=0.0, current_feedforward=0.0):
-    # Position Control Loop (P controller)
-    pos_error = pos_setpoint - current_position
-    vel_cmd = pos_error * pos_gain + vel_feedforward
+def get_leg_geometry(Phi_1, Phi_2):
+    reference_point = 0.25
+    #Converting the absolute encoder estimated into radians with refernce the the vertical axis (this is need as it was the way the jacobian was derived)
+    phi_1 = (math.pi/2) + ((reference_point - Phi_2) * (math.pi*2))
+    phi_2 = ((3*math.pi)/2) + ((Phi_1 - reference_point) * (math.pi*2))
     
-    # Velocity Control Loop (PI controller)
-    vel_error = vel_cmd - current_velocity
-    cascade_control.current_integral += vel_error * vel_integrator_gain
-    current_cmd = vel_error * vel_gain + cascade_control.current_integral + current_feedforward
+    #phi1 and phi2 are actually swithched in our set up when comparing it to the derived kinematics
+    theta = 0.5*(phi_1 + phi_2)
+    rho = 0.5*(phi_1 - phi_2) + math.pi
+    print(phi_1, phi_2, rho, theta)
+    return theta, rho
+
+
+
+if __name__ == "__main__":
+
+    soft_start_duration = 2.0  # Duration of the soft start in seconds
+    nodes = [0, 1]  # Node IDs for node 0 and node 1
     
-    return current_cmd
-
-# Initialize integrator for the velocity controller
-cascade_control.current_integral = 0.0
-
-
+    Theta_PD_Controller = PDController(0.3,0.1)
+    Rho_PD_Controller = PDController(0.2,0.1)
     
-
-# Put each node into closed loop control mode
-for node_id in nodes:
-    set_closed_loop_control(node_id)
-    set_position_control_mode(node_id)
-
-# Initial position setup
-for node_id in nodes:
-    set_position(node_id, desired_position,100,100)
-time.sleep(2)
-
-# Switch each node to torque control mode
-for node_id in nodes:
-    set_torque_control_mode(node_id)
+    target_rho = 0.5 * math.pi
+    target_theta = 3.14
+    bus = can.interface.Bus("can0", interface="socketcan")
     
-# Run control loop to reach target position
-reached_target = False
+    # Flush CAN RX buffer so there are no more old pending messages
+    while not (bus.recv(timeout=0) is None):
+       pass
 
-while True:
-    
+
+
+    # Put each node into closed loop control mode
     for node_id in nodes:
-        # Get current position and velocity feedback from the encoder
-        current_position, current_velocity = encoder_estimates(node_id)
+        set_closed_loop_control(node_id)
+        set_torque_control_mode(node_id)
+
+
+
+    # Run control loop to reach target position
+    try:
         
-        # Determine target position based on whether we've reached the target
-        if reached_target:
-            pos_setpoint = target_position  # Hold position at target
-        else:
-            pos_setpoint = desired_position  # Move towards desired position
+        while True:          
+            current_position_0, current_velocity_0 = encoder_estimates(nodes[0])
+            current_position_1, current_velocity_1 = encoder_estimates(nodes[1])
+            print("Encoder State: ",current_position_0, current_position_1, current_velocity_0, current_velocity_1)
+            theta, rho = get_leg_geometry(current_position_0,current_position_1)
+            Velocity_Vector = [[current_velocity_1], [-current_velocity_0]]
             
-        # Calculate PD torque command
-        current_cmd = cascade_control(current_position, current_velocity, pos_setpoint)
-        # Set calculated torque command for each node
-        set_torque(node_id, current_cmd)
-    
-    # Break the while loop if any node has reached the target position
-    if current_position <= target_position:
-        reached_target = True
-    
-    time.sleep(0.05)  # Control loop delay
-    
-    # Break if both nodes have reached the target and are in hold mode
-    if reached_target:
-        break
+            Jacobian = np.array([[0.5, 0.5], [0.5, -0.5]])
+            wibblit_deriv = np.dot(Jacobian, Velocity_Vector)
+            #print(wibblit_deriv)
 
-
-# Enter holding phase
-while True:
-    for node_id in nodes:
-        # Get current position and velocity feedback from the encoder
-        current_position, current_velocity = encoder_estimates(node_id)
+            theta_torque_cmd = Theta_PD_Controller.update(target_theta, theta, wibblit_deriv[0][0])
+            rho_torque_cmd = Rho_PD_Controller.update(target_rho, rho, wibblit_deriv[1][0])
+            
+            wibblit_torque = [[theta_torque_cmd], [rho_torque_cmd]]
+            motor_torque_cmd = np.dot(Jacobian.transpose(), wibblit_torque)
+            print(wibblit_torque)
         
-        # Calculate torque to hold position at target
-        current_cmd = cascade_control(current_position, current_velocity, target_position)
-        
-        # Set calculated torque command for the node
-        set_torque(node_id, current_cmd)
 
-    time.sleep(0.05)  # Control loop delay for holding position
+            set_torque(nodes[0],  motor_torque_cmd[1][0])
+            set_torque(nodes[1], -motor_torque_cmd[0][0])
+            
+            print(motor_torque_cmd)    
+            
+        
+
+
+#         # Enter holding phase
+#         while True:
+#             for node_id in nodes:
+#              theta_torque_cmd = Theta_PD_Controller.update()
+#         rho_torque_cmd = Rho_PD_Controller.update()
+#         Jacobian = [[0.5 0.5], [0.5 -0.5]]
+#         wibblet_torque = [[theta_torque_cmd], [rho_torque_cmd]]
+#         motor_torque_cmd = np.dot(Jacobian.transpose(), wibblet_torque)
+#         
+# 
+# 
+#             time.sleep(0.05)  # Control loop delay for holding position
+
+    except KeyboardInterrupt:
+        print("Keyboard interrupt detected. Setting nodes to idle...")
+        # Set each node to idle mode
+        for node_id in nodes:
+            set_idle(node_id)
+        print("Nodes set to idle. Exiting program.")
