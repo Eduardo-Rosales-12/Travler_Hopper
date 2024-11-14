@@ -69,11 +69,17 @@ class Hopper_State_Machine:
 
 
 
-def get_leg_geometry(Phi_1, Phi_2):
+def get_state_variables(encoder0_pos_estimate, encoder1_pos_estimate, encoder0_vel_estimate, encoder1_vel_estimate):
     reference_point = 0.25
     #Converting the absolute encoder estimated into radians with refernce the the vertical axis (this is need as it was the way the jacobian was derived)
-    phi_2 = (math.pi/2) + ((reference_point - Phi_2) * (math.pi*2))
-    phi_1 = ((3*math.pi)/2) + ((Phi_1 - reference_point) * (math.pi*2))
+    phi_1 = (math.pi/2) + ((reference_point - encoder0_pos_estimate) * (math.pi*2))
+    phi_2 = ((3*math.pi)/2) + ((encoder1_pos_estimate - reference_point) * (math.pi*2))
+
+    #The velcoities estimates must be slightly modified to get ensure that they corespond to the definition of phi_1 and phi_2
+    #The velocity of encoder1 must be switched to negative as phi2 is measured cw with respect to the vertical axis but the encoder velocity is 
+    #taken ccw with respect to the absolute zero position. 
+    phi_1_vel = encoder0_vel_estimate
+    phi_2_vel = -encoder1_vel_estimate
     
     #phi1 and phi2 are actually swithched in our set up when comparing it to the derived kinematics
     Upper_Link_Len = 0.100 #m
@@ -88,7 +94,23 @@ def get_leg_geometry(Phi_1, Phi_2):
         "Leg Angle": theta, 
         "Beta": beta
     }
-    return Leg_Geometry_Dict
+
+    #Calculate Wibblit state variables
+    #Using the calculated values for phi1 and phi2 the new coordinate system can be calculated in terms of theta and rho (aka wibblets)
+    theta = 0.5*(phi_1 + phi_2)
+    rho = 0.5*(phi_1 - phi_2) + math.pi
+
+    #set up jacobian to convert polar to wibblit system
+    Jacobian = np.array([[0.5, 0.5], [0.5, -0.5]])
+    Polar_Velocity_Vector = [[phi_1_vel], [phi_2_vel]]
+    
+    #Map the angular velocities of phi1 and phi2 to the wibblit velocities using the perviously defined jacobian 
+    wibblit_deriv = np.dot(Jacobian, Polar_Velocity_Vector)
+    theta_vel= Polar_Velocity_Vector[0][0]
+    rho_vel = Polar_Velocity_Vector[1][0]
+    
+    return Leg_Geometry_Dict, phi_1, phi_2, phi_1_vel, phi_2_vel, theta, rho, theta_vel, rho_vel
+
 
 def FK(length, theta):
     x = length*math.sin(theta)
@@ -162,7 +184,7 @@ def set_idle(node_id):
         is_extended_id=False
     ))
 
-def get_pos_estimate(node_id):
+def get_encoder_estimate(node_id):
     
    # Send read command
 #     bus.send(can.Message(
@@ -179,15 +201,9 @@ def get_pos_estimate(node_id):
 
     # Await reply
     for msg in bus:
-        if msg.arbitration_id == (node_id << 5 | 0x09): # 0x05: TxSdo
-            break
-    # Unpack and print reply
-    #_, _, _, pos_return_value = struct.unpack_from('<BHB' + 'f', msg.data)
-    pos_return_value, vel_return_value = struct.unpack_from('<ff', msg.data)
-
-    
-
-    return pos_return_value, vel_return_value
+        if msg.arbitration_id == (node_id << 5 | 0x09):  # Response with encoder data
+            pos_return_value, vel_return_value = struct.unpack_from('<ff', msg.data)
+            return pos_return_value, vel_return_value
 
 def get_torque_estimate(node_id):
 
@@ -247,11 +263,18 @@ if __name__ == "__main__":
         pass
     
     # Put each node into closed loop control mode
-    for node_id in nodes:
-        set_closed_loop_control(node_id)
-        set_position_control_mode(node_id)
+    #Set Up motor parameters 
+    Motor0 = nodes[0] #Front right linkage (phi2)
+    Motor1 = nodes[1] #Back left linkage (phi1)
 
-    
+    #Set Closed loop control 
+    set_closed_loop_control(Motor0)
+    set_closed_loop_control(Motor1)
+
+    #Set Torque Control 
+    set_torque_control_mode(Motor0)
+    set_torque_control_mode(Motor1)
+
     # Wait for each node to enter closed loop control by scanning heartbeat messages
     for node_id in nodes:
         for msg in bus:
@@ -264,7 +287,8 @@ if __name__ == "__main__":
     State_Machine = Hopper_State_Machine(0,0)
 
     #Initalizing Toe Position PD controller
-    Toe_Position_Controller = PDController(3, 0.08)
+    Theta_PD_Controller = PDController(0.3,0.1)
+    Rho_PD_Controller = PDController(0.2,0.1)
     
     #Initalize the latch status 
     latch_status = 0
@@ -281,16 +305,19 @@ if __name__ == "__main__":
     
     #State_Vector
     State_Vector = []
+    
     #Get the initial motor position estimates
-    initial_motor1_pos = get_pos_estimate(nodes[0])
-    initial_motor2_pos =get_pos_estimate(nodes[1])
+    initial_motor1_pos, initial_motor1_vel = get_encoder_estimate(Motor0)
+    initial_motor2_pos, initial_motor2_vel = get_encoder_estimate(Motor1)
+    
     Start_Time = time.perf_counter()
     Elapsed_Start_Time = time.perf_counter()
     
-    Initial_Leg_Geometry_Estimate = get_leg_geometry(initial_motor1_pos[0], initial_motor2_pos[0])
+    Leg_Geometry_Dict, phi_1, phi_2, phi_1_vel, phi_2_vel, theta, rho, theta_vel, rho_vel  = get_state_variables(initial_motor1_pos, initial_motor2_pos, initial_motor1_vel, initial_motor2_vel)
     Initial_Toe_Position_Estimate = FK(Initial_Leg_Geometry_Estimate["Leg Length"], Initial_Leg_Geometry_Estimate["Leg Angle"])
     Initial_Centerbar_Length = Initial_Toe_Position_Estimate[1]
     initial_centerbar_length_condition = 0
+    
     #Initalize Flight Tracker
     Flight_Tracker = 0
     
@@ -298,32 +325,30 @@ if __name__ == "__main__":
     Extension_Tracker = False
     
     while running:
-
         #grab initial motor position estimate 
-        motor1_pos = get_pos_estimate(nodes[0])
-        motor2_pos = get_pos_estimate(nodes[1])
+        motor1_pos, motor1_vel = get_encoder_estimate(nodes[0])
+        motor2_pos, motor2_vel = get_encoder_estimate(nodes[1])
         motor1_tor = get_torque_estimate(nodes[0])
-        motor2_tor = get_torque_estimate(nodes[0])
+        motor2_tor = get_torque_estimate(nodes[1])
         
         #Determine elapsed time
         New_Time = time.perf_counter()
         elapsed_time = New_Time - Elapsed_Start_Time
         
         #Save Data
-        data_log.append([elapsed_time, motor1_pos[0], motor2_pos[0], motor1_tor, motor2_tor])
+        data_log.append([elapsed_time, motor1_pos, motor2_pos, motor1_tor, motor2_tor])
 
-        
-        
         #Calculate the length of the centerbar length 
-        Leg_Geometry = get_leg_geometry(motor1_pos[0], motor2_pos[0])
+        Leg_Geometry = get_leg_geometry(motor1_pos, motor2_pos)
         Toe_Position = FK(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"])
         Centerbar_Length = Toe_Position[1]
         
         #Calculate the centerbar derivatice 
         Centerbar_Length_Deriv = (Initial_Centerbar_Length - Centerbar_Length)/(New_Time - Start_Time)
+        
         #qtime.sleep(0.001)
         #Check the system state
-        State =  State_Machine.get_state(motor1_pos[0], motor2_pos[0], Extension_Tracker, latch_status)
+        State =  State_Machine.get_state(motor1_pos, motor2_pos, Extension_Tracker, latch_status)
         print(State)
         State_Vector.append(State)
         
@@ -378,6 +403,9 @@ if __name__ == "__main__":
 
         
         elif State == "flight":
+            target_rho = 0.5 * math.pi
+            target_theta = 3.14
+            
             extension_limit = 0.05
             State_Machine.flight()
             set_position_control_mode(nodes[0])
