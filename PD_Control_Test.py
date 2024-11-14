@@ -68,20 +68,50 @@ def encoder_estimates(node_id):
         if msg.arbitration_id == (node_id << 5 | 0x09):  # Response with encoder data
             pos_return_value, vel_return_value = struct.unpack_from('<ff', msg.data)
             return pos_return_value, vel_return_value
-        
-def get_leg_geometry(Phi_1, Phi_2):
+
+
+def get_state_variables(encoder0_pos_estimate, encoder1_pos_estimate, encoder0_vel_estimate, encoder1_vel_estimate):
+    #Ecnoder0 measures the position of the front right linkage, while encoder1 measures the position of the back left linkage 
+    #This means ecnoder0 corresponds to phi1, while encoder1 corresponds to phi2
     reference_point = 0.25
-    #Converting the absolute encoder estimated into radians with refernce the the vertical axis (this is need as it was the way the jacobian was derived)
-    phi_1 = (math.pi/2) + ((reference_point - Phi_2) * (math.pi*2))
-    phi_2 = ((3*math.pi)/2) + ((Phi_1 - reference_point) * (math.pi*2))
     
-    #phi1 and phi2 are actually swithched in our set up when comparing it to the derived kinematics
+    #Converting the absolute encoder estimated into radians with refernce the the vertical axis (this is need as it was the way the jacobian was derived)
+    phi_1 = (math.pi/2) + ((reference_point - encoder0_pos_estimate) * (math.pi*2))
+    phi_2 = ((3*math.pi)/2) + ((encoder1_pos_estimate - reference_point) * (math.pi*2))
+    
+    #Using the calculated values for phi1 and phi2 the new coordinate system can be calculated in terms of theta and rho (aka wibblets)
     theta = 0.5*(phi_1 + phi_2)
     rho = 0.5*(phi_1 - phi_2) + math.pi
-    print(phi_1, phi_2, rho, theta)
-    return theta, rho
 
+    #The velcoities estimates must be slightly modified to get ensure that they corespond to the definition of phi_1 and phi_2
+    #The velocity of encoder1 must be switched to negative as phi2 is measured cw with respect to the vertical axis but the encoder velocity is 
+    #taken ccw with respect to the absolute zero position. 
+    phi_1_vel = encoder0_vel_estimate
+    phi_2_vel = -encoder1_vel_estimate
 
+    #set up jacobian to convert polar to wibblit system
+    Jacobian = np.array([[0.5, 0.5], [0.5, -0.5]])
+    Polar_Velocity_Vector = [[phi_1_vel], [phi_2_vel]]
+    
+    #Map the angular velocities of phi1 and phi2 to the wibblit velocities using the perviously defined jacobian 
+    wibblit_deriv = np.dot(Jacobian, Polar_Velocity_Vector)
+    theta_vel= Polar_Velocity_Vector[0][0]
+    rho_vel = Polar_Velocity_Vector[1][0]
+    
+    #print(phi_1, phi_2, phi_1_vel, phi_2_vel, theta, rho, theta_vel, rho_vel)
+    return phi_1, phi_2, phi_1_vel, phi_2_vel, theta, rho, theta_vel, rho_vel
+
+def get_torques(theta_torque, rho_torque)
+    wibblit_torques = [[theta_torque_cmd], [rho_torque_cmd]]
+    #convert wibblit torques back into orginal coordinate system 
+    motor_torque_cmd = np.dot(Jacobian.transpose(), wibblit_torques)
+
+    #In the get_state_variables function we redefine the angular position estimate to be measured cw with reference to the vertical. To reconvert to normal torques this means 
+    #we must multiply the torque of back left linkage by a negative
+    Motor0_Torque = motor_torque_cmd[0][0]
+    Motor1_Torque = -motor_torque_cmd[1][0]
+    
+    return Motor0_Torque, Motor1_Torque
 
 if __name__ == "__main__":
 
@@ -99,45 +129,44 @@ if __name__ == "__main__":
     while not (bus.recv(timeout=0) is None):
        pass
 
+    #Set Up motor parameters 
+    Motor0 = nodes[0] #Front right linkage (phi2)
+    Motor1 = nodes[1] #Back left linkage (phi1)
 
 
-    # Put each node into closed loop control mode
-    for node_id in nodes:
-        set_closed_loop_control(node_id)
-        set_torque_control_mode(node_id)
+    #Set Closed loop control 
+    set_closed_loop_control(Motor0)
+    set_closed_loop_control(Motor1)
 
+    #Set Torque Control 
+    set_torque_control_mode(Motor0)
+    set_torque_control_mode(Motor1)
 
 
     # Run control loop to reach target position
     try:
         
-        while True:          
-            current_position_0, current_velocity_0 = encoder_estimates(nodes[0])
-            current_position_1, current_velocity_1 = encoder_estimates(nodes[1])
-            print("Encoder State: ",current_position_0, current_position_1, current_velocity_0, current_velocity_1)
-            theta, rho = get_leg_geometry(current_position_0,current_position_1)
-            Velocity_Vector = [[current_velocity_1], [-current_velocity_0]]
+        while True:      
+            #Get position and velocity estimates
+            current_position_0, current_velocity_0 = encoder_estimates(Motor0)
+            current_position_1, current_velocity_1 = encoder_estimates(Motor1)
             
-            Jacobian = np.array([[0.5, 0.5], [0.5, -0.5]])
-            wibblit_deriv = np.dot(Jacobian, Velocity_Vector)
-            #print(wibblit_deriv)
+            #print("Encoder State: ",current_position_0, current_position_1, current_velocity_0, current_velocity_1)
+            #Get system state variables
+            phi_1, phi_2, phi_1_vel, phi_2_vel, theta, rho, theta_vel, rho_vel = get_state_variables(current_position_0, current_position_1, current_velocity_0, current_velocity_1)
 
-            theta_torque_cmd = Theta_PD_Controller.update(target_theta, theta, wibblit_deriv[0][0])
-            rho_torque_cmd = Rho_PD_Controller.update(target_rho, rho, wibblit_deriv[1][0])
+            #pass the respective parameters through the each pd loop 
+            theta_torque = Theta_PD_Controller.update(target_theta, theta, theta_vel)
+            rho_torque = Rho_PD_Controller.update(target_rho, rho, rho_vel)
+
+            #Wibblit torques to real-world torques
+            Motor0_Torque, Motor1_Torque = get_torques(theta_torque, rho_torque)
             
-            wibblit_torque = [[theta_torque_cmd], [rho_torque_cmd]]
-            motor_torque_cmd = np.dot(Jacobian.transpose(), wibblit_torque)
-            print(wibblit_torque)
-        
-
-            set_torque(nodes[0],  motor_torque_cmd[1][0])
-            set_torque(nodes[1], -motor_torque_cmd[0][0])
+            set_torque(Motor0, Motor0_Torque)
+            set_torque(Motor1, Motor1_Torque)
             
             print(motor_torque_cmd)    
             
-        
-
-
 #         # Enter holding phase
 #         while True:
 #             for node_id in nodes:
