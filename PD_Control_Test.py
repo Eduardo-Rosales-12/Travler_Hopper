@@ -9,9 +9,9 @@ class PDController:
         self.Kp = Kp
         self.Kd = Kd
 
-    def update(self, target_val, measured_val, deriv):
+    def update(self, target_val, measured_val, dt):
         Proportional_Error = target_val - measured_val
-        Derivative_Error = deriv
+        Derivative_Error = Proportional_Error/dt
         Corrected_Signal = self.Kp * Proportional_Error + self.Kd * Derivative_Error
         return Corrected_Signal
     
@@ -142,6 +142,7 @@ if __name__ == "__main__":
     set_torque_control_mode(Motor0)
     set_torque_control_mode(Motor1)
 
+    Start_Time = time.perf_counter()
 
     # Run control loop to reach target position
     try:
@@ -150,22 +151,26 @@ if __name__ == "__main__":
             #Get position and velocity estimates
             current_position_0, current_velocity_0 = encoder_estimates(Motor0)
             current_position_1, current_velocity_1 = encoder_estimates(Motor1)
+            New_Time = time.perf_counter()
             
             #print("Encoder State: ",current_position_0, current_position_1, current_velocity_0, current_velocity_1)
             #Get system state variables
             phi_1, phi_2, phi_1_vel, phi_2_vel, theta, rho, theta_vel, rho_vel = get_state_variables(current_position_0, current_position_1, current_velocity_0, current_velocity_1)
 
+            #calculate dt 
+            dt = New_Time - Start_Time
+            
             #pass the respective parameters through the each pd loop 
-            theta_torque = Theta_PD_Controller.update(target_theta, theta, theta_vel)
-            rho_torque = Rho_PD_Controller.update(target_rho, rho, rho_vel)
+            theta_torque = Theta_PD_Controller.update(target_theta, theta, dt)
+            rho_torque = Rho_PD_Controller.update(target_rho, rho, dt)
 
             #Wibblit torques to real-world torques
             Motor0_Torque, Motor1_Torque = get_torques(theta_torque, rho_torque)
             
             set_torque(Motor0, Motor0_Torque)
             set_torque(Motor1, Motor1_Torque)
-            
-            print(motor_torque_cmd)    
+
+            Start_Time = New_Time
             
 #         # Enter holding phase
 #         while True:
