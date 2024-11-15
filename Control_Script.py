@@ -15,9 +15,9 @@ class PDController:
         self.Kp = Kp
         self.Kd = Kd
 
-    def update(self, target_val, measured_val, deriv):
+    def update(self, target_val, measured_val, dt):
         Proportional_Error = target_val - measured_val
-        Derivative_Error = deriv
+        Derivative_Error = (target_val - measured_val)/dt
         Corrected_Signal = self.Kp * Proportional_Error + self.Kd * Derivative_Error
         return Corrected_Signal
 
@@ -41,36 +41,29 @@ class Hopper_State_Machine:
         return        
  
     
-    def get_state(self, motor1_encoder_estimate, motor2_encoder_estimate, Extension_Tracker, latch_status):
-        extension_limit_value = 0.05
-        compression_limit_value = 0.3
+    def get_state(self, Centerbar_Length, Force_Estimate, Previous_State, latch_status):
+        Centerbar_Compression_Target = 0.15
+        Centerbar_Extension_Target = 0.20
+        Threshold = 10
         
-        Centerbar_Length_Error = math.abs(Target_Centerbar_Length - Centerbar_Length)/Target_Centerbar_Length
-        if Centerbar_Length_Error <= 0.02:
-            Extension_Tracker = False
-                
-        #offset = 0.045
-        print(motor1_encoder_estimate)
+        Compression_Centerbar_Length_Error = math.abs(Centerbar_Compression_Target - Centerbar_Length)/Target_Centerbar_Length
+        Extension_Centerbar_Length_Error = math.abs(Centerbar_Extension_Target - Centerbar_Length)/Target_Centerbar_Length
+         
         if latch_status == 0: 
             return "idle"
         
         elif latch_status == 1:
-            if (motor1_encoder_estimate <= extension_limit_value) or (motor2_encoder_estimate <= extension_limit_value): 
-                return "flight"       
+            if (Force_Estimate > Threshold): 
+                return "compression"       
                 
-            if (motor1_encoder_estimate < compression_limit_value and motor1_encoder_estimate > extension_limit_value) or (motor2_encoder_estimate < compression_limit_value and motor2_encoder_estimate > extension_limit_value):
-                
-                if (Extension_Tracker == False):
-                    return "compression"
-                
-                else:
-                    return "extension"
-                
-            if (motor1_encoder_estimate >= compression_limit_value) or (motor2_encoder_estimate >= compression_limit_value):
+            if (Compression_Centerbar_Length_Error <= 0.02):
                 return "extension"
                 
+            if (Extension_Centerbar_Length_Error <= 0.02):
+                return "flight"
+                
             else:
-                return "State could not be determined!"
+                return Previous_State
 
 
 
@@ -237,9 +230,12 @@ def get_torque_estimate(node_id):
 
     return torque_return_value
 
-def get_desired_force(K_spring, K_damping, centerbar_length, centerbar_length_deriv):
-    Force = K_spring * centerbar_length + K_damping* centerbar_length_deriv
-    return Force 
+def get_Forces(Jacobian, Torque_Vector):
+    Jacobian_Inverse = np.linalg.inv(Jacobian)
+    Forces = Torque_Vector @ Jacobian_Inverse
+    Force_Magnitude = math.hypot(Forces[0][0], Forces[0][1])
+
+    return Force_Magnitude
 
 def on_press(key):
     global running
@@ -287,7 +283,7 @@ if __name__ == "__main__":
 
     #Initalize state object 
     State_Machine = Hopper_State_Machine(0,0)
-
+    Previous_State = "idle"
     #Initalizing Toe Position PD controller in Flight 
     Theta_PD_Controller = PDController(0.3,0.1)
     Rho_PD_Controller = PDController(0.2,0.1)
@@ -344,36 +340,37 @@ if __name__ == "__main__":
         motor1_tor = get_torque_estimate(Motor1)
         motor2_tor = get_torque_estimate(Motor2)
         
-        #Determine elapsed time
-        New_Time = time.perf_counter()
-        elapsed_time = New_Time - Elapsed_Start_Time
-        
         #Calculate the length of the centerbar length 
         Leg_Geometry, phi_1, phi_2, phi_1_vel, phi_2_vel, theta, rho, theta_vel, rho_vel  = get_state_variables(motor1_pos, motor2_pos, motor1_vel, motor2_vel)
         Toe_Position = FK(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"])
         Centerbar_Length = Toe_Position[1]
         
-        #Calculate the centerbar derivatice 
-        Centerbar_Length_Deriv = (Initial_Centerbar_Length - Centerbar_Length)/(New_Time - Start_Time)
+        #Calculate Force 
+        Jacobian = get_Jacobian(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"], Leg_Geometry["Beta"])
+        Force_z = get_Forces(Jacobian, [[motor1_tor], [motor2_tor]])
         
-        #qtime.sleep(0.001)
         #Check and save the system state
-        State =  State_Machine.get_state(motor1_pos, motor2_pos, Extension_Tracker, latch_status)
+        State =  State_Machine.get_state(Centerbar_Length, Force_z, Previous_State, latch_status)
         print(State)
 
+        #Determine elapsed time
+        New_Time = time.perf_counter()
+        elapsed_time = New_Time - Elapsed_Start_Time
+        
         #Save Data
         data_log.append([elapsed_time, motor1_pos, motor2_pos, motor1_tor, motor2_tor, State])
 
 
         if State == "idle":
             latch_status = 1
+            State = "compression"
 
         elif State == "compression":
             State_Machine.compression()
             Target_Centerbar_Length = 0.15
+            dt = New_Time - Start_Time
             
-            Force = Centerbar_Compression_PD_Controller.update(Target_Centerbar_Length, Centerbar_Length, Centerbar_Length_Deriv)
-            Jacobian = get_Jacobian(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"], Leg_Geometry["Beta"])
+            Force = Centerbar_Compression_PD_Controller.update(Target_Centerbar_Length, Centerbar_Length, dt)
             Motor1_Torque, Motor2_Torque = get_Torques(Jacobian, [[0],[Force]])
             
             set_torque(Motor1, Motor1_Torque)
@@ -383,9 +380,9 @@ if __name__ == "__main__":
         elif State == "extension":
             State_Machine.extension()
             Target_Centerbar_Length = 0.25
-            
-            Force = Centerbar_Extension_PD_Controller.update(Target_Centerbar_Length, Centerbar_Length, Centerbar_Length_Deriv)
-            Jacobian = get_Jacobian(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"], Leg_Geometry["Beta"])
+            dt = New_Time - Start_Time
+
+            Force = Centerbar_Extension_PD_Controller.update(Target_Centerbar_Length, Centerbar_Length, dt)
             Motor1_Torque, Motor2_Torque = get_Torques(Jacobian, [[0],[Force]])
             
             set_torque(Motor1, Motor1_Torque)
@@ -394,24 +391,26 @@ if __name__ == "__main__":
         elif State == "flight":
             target_rho = 0.5 * math.pi
             target_theta = 3.14
+            dt = New_Time - Start_Time
 
             #pass the respective parameters through the each pd loop 
-            theta_torque = Theta_PD_Controller.update(target_theta, theta, theta_vel)
-            rho_torque = Rho_PD_Controller.update(target_rho, rho, rho_vel)
+            theta_torque = Theta_PD_Controller.update(target_theta, theta, dt)
+            rho_torque = Rho_PD_Controller.update(target_rho, rho, dt)
 
             #Wibblit torques to real-world torques
-            Motor0_Torque, Motor1_Torque = get_torques(theta_torque, rho_torque)
+            Motor1_Torque, Motor2_Torque = get_torques(theta_torque, rho_torque)
             
-            set_torque(Motor0, Motor0_Torque)
-            set_torque(Motor1, Motor1_Torque)
+            set_torque(Motor0, Motor1_Torque)
+            set_torque(Motor1, Motor2_Torque)
 
             
         else:
             print("Phase state could not be determined.")
             
-    #Redfine the inital motor positions
+        #Redfine the inital motor positions
         Initial_Centerbar_Length = Centerbar_Length
         Start_Time = New_Time
+        Previous_State = State
     
 listener.join()
 
