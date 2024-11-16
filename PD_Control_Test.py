@@ -5,15 +5,35 @@ import math
 import numpy as np
 
 class PDController:
-    def __init__(self, Kp, Kd):
+    def __init__(self, Kp, Kd, setpoint):
         self.Kp = Kp
         self.Kd = Kd
+        self.setpoint = setpoint
+        self.prev_error = 0.0
+        self.prev_time = None
 
-    def update(self, target_val, measured_val, dt):
-        Proportional_Error = target_val - measured_val
-        Derivative_Error = Proportional_Error / dt if dt != 0 else 0  # Avoid division by zero
+    def update(self, measured_val, current_time):
+        Proportional_Error = self.setpoint - measured_val
+        
+        if self.prev_time is None:
+            dt = 0.0
+        else:
+            dt = current_time - self.prev_time
+            
+        Derivative_Error = (Proportional_Error - self.prev_error) / dt if dt > 0 else 0.0
+        
         Corrected_Signal = self.Kp * Proportional_Error + self.Kd * Derivative_Error
+        
+        self.prev_error = Proportional_Error
+        self.prev_time = current_time
+        
+        
         return Corrected_Signal
+    
+    def reset(self):
+    
+        self.prev_error = 0.0
+        self.prev_time = None
     
 def set_closed_loop_control(node_id):
     bus.send(can.Message(
@@ -92,19 +112,21 @@ def get_torques(theta_torque, rho_torque):
     Jacobian = np.array([[0.5, 0.5], [0.5, -0.5]])
     motor_torque_cmd = np.dot(Jacobian.transpose(), wibblit_torques)
     
-    Motor0_Torque = motor_torque_cmd[0][0]
-    Motor1_Torque = -motor_torque_cmd[1][0]
+    Motor0_Torque = -motor_torque_cmd[0][0]
+    Motor1_Torque = motor_torque_cmd[1][0]
     
     return Motor0_Torque, Motor1_Torque
 
 if __name__ == "__main__":
     soft_start_duration = 2.0
     nodes = [0, 1]
-    Theta_PD_Controller = PDController(0.3, 0.1)
-    Rho_PD_Controller = PDController(0.2, 0.1)
     
-    target_rho = 0.5 * math.pi
+    target_rho = 1.8
     target_theta = 3.14
+    
+    Theta_PD_Controller = PDController(6, 0.2, target_theta)
+    Rho_PD_Controller = PDController(6, 0.2, target_rho)
+    
     bus = can.interface.Bus("can0", interface="socketcan")
     
     while not (bus.recv(timeout=0) is None):
@@ -117,26 +139,25 @@ if __name__ == "__main__":
     set_torque_control_mode(Motor0)
     set_torque_control_mode(Motor1)
 
-    Start_Time = time.perf_counter()
 
     try:
         while True:
             current_position_0, current_velocity_0 = encoder_estimates(Motor0)
             current_position_1, current_velocity_1 = encoder_estimates(Motor1)
-            New_Time = time.perf_counter()
-            dt = New_Time - Start_Time
+            
+            current_time = time.time()  
             
             phi_1, phi_2, phi_1_vel, phi_2_vel, theta, rho, theta_vel, rho_vel = get_state_variables(current_position_0, current_position_1, current_velocity_0, current_velocity_1)
 
-            theta_torque = Theta_PD_Controller.update(target_theta, theta, dt)
-            rho_torque = Rho_PD_Controller.update(target_rho, rho, dt)
+            theta_torque = Theta_PD_Controller.update(theta,current_time)
+            rho_torque = Rho_PD_Controller.update(rho, current_time)
 
             Motor0_Torque, Motor1_Torque = get_torques(theta_torque, rho_torque)
             
+            print(rho,theta)
+            
             set_torque(Motor0, Motor0_Torque)
             set_torque(Motor1, Motor1_Torque)
-
-            Start_Time = New_Time
 
     except KeyboardInterrupt:
         print("Keyboard interrupt detected. Setting nodes to idle...")

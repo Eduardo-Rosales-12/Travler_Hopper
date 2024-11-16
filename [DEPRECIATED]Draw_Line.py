@@ -138,12 +138,12 @@ if __name__ == "__main__":
     set_position_control_mode(node_id_0)
     set_position_control_mode(node_id_1)
     
-    position = 0.25
-    offset = -0.015
+    position = 0.2
+    offset = 0
     
-    set_position(node_id_0, position + offset)
-    set_position(node_id_1, position)
-    time.sleep(1)  # Reduced initial sleep time for faster oscillation start
+    set_position(node_id_0, position)
+    set_position(node_id_1, position+offset)
+    time.sleep(5)  # Reduced initial sleep time for faster oscillation start
     
     oscilation_position = 0.05
     oscilation_num = 10  # Increase oscillation count
