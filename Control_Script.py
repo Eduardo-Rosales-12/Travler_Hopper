@@ -11,44 +11,50 @@ from pynput import keyboard
 import csv 
 
 class PDController:
-    def __init__(self, Kp, Kd):
+    def __init__(self, Kp, Kd, setpoint):
         self.Kp = Kp
         self.Kd = Kd
+        self.setpoint = setpoint
+        self.prev_error = 0.0
+        self.prev_time = None
 
-    def update(self, target_val, measured_val, dt):
-        Proportional_Error = target_val - measured_val
-        Derivative_Error = (target_val - measured_val)/dt
+    def update(self, measured_val, current_time):
+        Proportional_Error = self.setpoint - measured_val
+        
+        if self.prev_time is None:
+            dt = 0.0
+        else:
+            dt = current_time - self.prev_time
+            
+        Derivative_Error = (Proportional_Error - self.prev_error) / dt if dt > 0 else 0.0
+        
         Corrected_Signal = self.Kp * Proportional_Error + self.Kd * Derivative_Error
+        
+        self.prev_error = Proportional_Error
+        self.prev_time = current_time
+        
+        
         return Corrected_Signal
+    
+    def reset(self):
+    
+        self.prev_error = 0.0
+        self.prev_time = None
 
 class Hopper_State_Machine:
-    def __init__(self, Kc, Cd):
-        self.Kc = Kc
-        self.Cd = Cd 
-        self.state = "Idle"
+    def __init__(self):
+        self.state = "idle"
 
-    def compression(self):
-        self.Kc = -1
-        self.Cd = 1
-        return 
+    
+    def get_state(self, rho, Force_Estimate, Previous_State, latch_status):
+        Extension_Flight_Target_Rho = 2
+        Compression_Target_Rho = 0.8
+        Threshold = 200
 
-    def extension(self):  
-        self.Kc = -800
-        self.Cd = 1
-        return 
-    
-    def flight(self): #I know we discussed swithcing the spring stiffness during flight phase but it is already being switch once it enterss compression mode so do we need to switch if no torques are being applied?
-        return        
- 
-    
-    def get_state(self, Centerbar_Length, Force_Estimate, Previous_State, latch_status):
-        Centerbar_Compression_Target = 0.15
-        Centerbar_Extension_Target = 0.20
-        Threshold = 10
+        Compression_Rho_Error = abs(Compression_Target_Rho - rho)/Compression_Target_Rho
+        Extension_Rho_Error = abs(Extension_Flight_Target_Rho - rho)/Extension_Flight_Target_Rho
         
-        Compression_Centerbar_Length_Error = math.abs(Centerbar_Compression_Target - Centerbar_Length)/Target_Centerbar_Length
-        Extension_Centerbar_Length_Error = math.abs(Centerbar_Extension_Target - Centerbar_Length)/Target_Centerbar_Length
-         
+        #print(Force_Estimate)
         if latch_status == 0: 
             return "idle"
         
@@ -56,10 +62,10 @@ class Hopper_State_Machine:
             if (Force_Estimate > Threshold): 
                 return "compression"       
                 
-            if (Compression_Centerbar_Length_Error <= 0.02):
+            elif (Compression_Rho_Error < 0.05):
                 return "extension"
                 
-            if (Extension_Centerbar_Length_Error <= 0.02):
+            elif (Extension_Rho_Error < 0.05):
                 return "flight"
                 
             else:
@@ -72,7 +78,7 @@ def get_state_variables(encoder0_pos_estimate, encoder1_pos_estimate, encoder0_v
     #Converting the absolute encoder estimated into radians with refernce the the vertical axis (this is need as it was the way the jacobian was derived)
     phi_1 = (math.pi/2) + ((reference_point - encoder0_pos_estimate) * (math.pi*2))
     phi_2 = ((3*math.pi)/2) + ((encoder1_pos_estimate - reference_point) * (math.pi*2))
-
+q
     #The velcoities estimates must be slightly modified to get ensure that they corespond to the definition of phi_1 and phi_2
     #The velocity of encoder1 must be switched to negative as phi2 is measured cw with respect to the vertical axis but the encoder velocity is 
     #taken ccw with respect to the absolute zero position. 
@@ -86,6 +92,7 @@ def get_state_variables(encoder0_pos_estimate, encoder1_pos_estimate, encoder0_v
     theta = 0.5*(phi_1 + phi_2)
     gamma = 0.5*(-phi_2 + phi_1)
     length = Toe_Len + Upper_Link_Len*math.cos(gamma) + math.sqrt((Lower_Link_Len)**2 - (Upper_Link_Len**2)*(math.sin(gamma)**2))
+    #print(length)
     beta = -Upper_Link_Len*math.sin(gamma)*(1 + ((Upper_Link_Len * math.cos(gamma))/math.sqrt((Lower_Link_Len)**2 - ((Upper_Link_Len)**2)*(math.sin(gamma)**2))))
     Leg_Geometry_Dict = {
         "Leg Length": length,
@@ -106,13 +113,13 @@ def get_state_variables(encoder0_pos_estimate, encoder1_pos_estimate, encoder0_v
     wibblit_deriv = np.dot(Jacobian, Polar_Velocity_Vector)
     theta_vel= Polar_Velocity_Vector[0][0]
     rho_vel = Polar_Velocity_Vector[1][0]
-    
+    #print(phi_1, phi_2)
     return Leg_Geometry_Dict, phi_1, phi_2, phi_1_vel, phi_2_vel, theta, rho, theta_vel, rho_vel
 
 
 def FK(length, theta):
     x = length*math.sin(theta)
-    z = length*math.cos(theta)
+    z = abs(length*math.cos(theta))
     Coords = (x,z)
     return Coords
 
@@ -133,10 +140,19 @@ def get_Torques(Jacobian, Forces):
     for Torque in Torques:
         if Torque[0] > Max_Torque:
             Torque = Max_Torque
-    Motor1_Torque = Torques[0]
-    Motor2_Torque = -Torques[1]
+    Motor1_Torque = -Torques[0][0]
+    Motor2_Torque = Torques[1][0]
     return Motor1_Torque, Motor2_Torque
 
+def get_Torques_from_Wibblits(theta_torque, rho_torque):
+    wibblit_torques = [[theta_torque], [rho_torque]]
+    Jacobian = np.array([[0.5, 0.5], [0.5, -0.5]])
+    motor_torque_cmd = np.dot(Jacobian.transpose(), wibblit_torques)
+    
+    Motor0_Torque = -motor_torque_cmd[0][0]
+    Motor1_Torque = motor_torque_cmd[1][0]
+    
+    return Motor0_Torque, Motor1_Torque
 # Function to put a node into closed loop control mode
 def set_closed_loop_control(node_id):
     bus.send(can.Message(
@@ -232,8 +248,8 @@ def get_torque_estimate(node_id):
 
 def get_Forces(Jacobian, Torque_Vector):
     Jacobian_Inverse = np.linalg.inv(Jacobian)
-    Forces = Torque_Vector @ Jacobian_Inverse
-    Force_Magnitude = math.hypot(Forces[0][0], Forces[0][1])
+    Forces = np.dot(Jacobian_Inverse.transpose(), Torque_Vector)
+    Force_Magnitude = math.hypot(Forces[0][0], Forces[1][0])
 
     return Force_Magnitude
 
@@ -282,40 +298,37 @@ if __name__ == "__main__":
                     break
 
     #Initalize state object 
-    State_Machine = Hopper_State_Machine(0,0)
+    State_Machine = Hopper_State_Machine()
     Previous_State = "idle"
-    #Initalizing Toe Position PD controller in Flight 
-    Theta_PD_Controller = PDController(0.3,0.1)
-    Rho_PD_Controller = PDController(0.2,0.1)
+    #Initalizing Toe Position PD controller in Flight
+    Extension_Flight_Target_Theta = 3.14
+    Extension_Flight_Target_Rho = 2.8
+    Extension_Flight_Theta_PD_Controller = PDController(6,0.2,Extension_Flight_Target_Theta)
+    Extension_Flight_Rho_PD_Controller = PDController(6,0.2,Extension_Flight_Target_Rho)
 
-    #Initalizing Centerbar PD Controller in Compression 
-    Centerbar_Compression_PD_Controller = PDController(0.2,0.1)
+    #Initalizing Centerbar PD Controller in Compression
+    Compression_Target_Theta = 3.14
+    Compression_Target_Rho = 0.8
+    Compression_Theta_PD_Controller = PDController(1,0.2,Compression_Target_Theta)
+    Compression_Rho_PD_Controller = PDController(1,0.2,Compression_Target_Rho)
+    
 
-    #Initalizing Centerbar PD Controller in Compression 
-    Centerbar_Extension_PD_Controller = PDController(0.2,0.1)
+    #Set Closed Loop Control
+    set_closed_loop_control(Motor1)
+    set_closed_loop_control(Motor2)
+    
+    #Set Torque Control 
+    set_torque_control_mode(Motor1)
+    set_torque_control_mode(Motor2)
     
     #Initalize the latch status 
     latch_status = 0
     
-    #Check the hopping mode
-    initial_position = 0.25
-    offset = 0.015
-    set_position_control_mode(Motor1)
-    set_position_control_mode(Motor2)
-    
-    set_position(Motor1,initial_position - offset)
-    set_position(Motor2,initial_position)
-    time.sleep(3)
-
     #Setup data log
     data_log = []
     
     #State_Vector
     State_Vector = []
-
-    #Set Torque Control 
-    set_torque_control_mode(Motor1)
-    set_torque_control_mode(Motor2)
     
     #Get the initial motor position estimates
     initial_motor1_pos, initial_motor1_vel = get_encoder_estimate(Motor1)
@@ -325,9 +338,6 @@ if __name__ == "__main__":
     Elapsed_Start_Time = time.perf_counter()
     
     Initial_Leg_Geometry, initial_phi_1, initial_phi_2, initial_phi_1_vel, initial_phi_2_vel, initial_theta, initial_rho, initial_theta_vel, initial_rho_vel  = get_state_variables(initial_motor1_pos, initial_motor2_pos, initial_motor1_vel, initial_motor2_vel)
-    Initial_Toe_Position_Estimate = FK(Initial_Leg_Geometry["Leg Length"], Initial_Leg_Geometry["Leg Angle"])
-    Initial_Centerbar_Length = Initial_Leg_Geometry[1]
-    initial_centerbar_length_condition = 0
 
     #Initialize the state tracker
     Extension_Tracker = False
@@ -342,15 +352,13 @@ if __name__ == "__main__":
         
         #Calculate the length of the centerbar length 
         Leg_Geometry, phi_1, phi_2, phi_1_vel, phi_2_vel, theta, rho, theta_vel, rho_vel  = get_state_variables(motor1_pos, motor2_pos, motor1_vel, motor2_vel)
-        Toe_Position = FK(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"])
-        Centerbar_Length = Toe_Position[1]
-        
+        print(theta, rho)
         #Calculate Force 
         Jacobian = get_Jacobian(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"], Leg_Geometry["Beta"])
         Force_z = get_Forces(Jacobian, [[motor1_tor], [motor2_tor]])
-        
+
         #Check and save the system state
-        State =  State_Machine.get_state(Centerbar_Length, Force_z, Previous_State, latch_status)
+        State =  State_Machine.get_state(rho, Force_z, Previous_State, latch_status)
         print(State)
 
         #Determine elapsed time
@@ -363,64 +371,54 @@ if __name__ == "__main__":
 
         if State == "idle":
             latch_status = 1
-            State = "compression"
+            #State = "compression"
 
         elif State == "compression":
-            State_Machine.compression()
-            Target_Centerbar_Length = 0.15
-            dt = New_Time - Start_Time
+            #State_Machine.compression()
+            current_time = time.time()  
             
-            Force = Centerbar_Compression_PD_Controller.update(Target_Centerbar_Length, Centerbar_Length, dt)
-            Motor1_Torque, Motor2_Torque = get_Torques(Jacobian, [[0],[Force]])
-            
+            theta_torque = Compression_Theta_PD_Controller.update(theta,current_time)
+            rho_torque = Compression_Rho_PD_Controller.update(rho, current_time)
+
+            Motor1_Torque, Motor2_Torque = get_Torques_from_Wibblits(theta_torque, rho_torque)
+                        
             set_torque(Motor1, Motor1_Torque)
             set_torque(Motor2, Motor2_Torque)
 
 
         elif State == "extension":
-            State_Machine.extension()
-            Target_Centerbar_Length = 0.25
-            dt = New_Time - Start_Time
-
-            Force = Centerbar_Extension_PD_Controller.update(Target_Centerbar_Length, Centerbar_Length, dt)
-            Motor1_Torque, Motor2_Torque = get_Torques(Jacobian, [[0],[Force]])
+            #State_Machine.extension()
+            current_time = time.time()
             
+            theta_torque = Extension_Flight_Theta_PD_Controller.update(theta,current_time)
+            rho_torque = Compression_Rho_PD_Controller.update(rho, current_time)
+
+            Motor1_Torque, Motor2_Torque = get_Torques_from_Wibblits(theta_torque, rho_torque)
+                        
             set_torque(Motor1, Motor1_Torque)
             set_torque(Motor2, Motor2_Torque)
         
         elif State == "flight":
-            target_rho = 0.5 * math.pi
-            target_theta = 3.14
-            dt = New_Time - Start_Time
-
-            #pass the respective parameters through the each pd loop 
-            theta_torque = Theta_PD_Controller.update(target_theta, theta, dt)
-            rho_torque = Rho_PD_Controller.update(target_rho, rho, dt)
-
-            #Wibblit torques to real-world torques
-            Motor1_Torque, Motor2_Torque = get_torques(theta_torque, rho_torque)
+            #State_Machine.extension()
+            current_time = time.time()
             
-            set_torque(Motor0, Motor1_Torque)
-            set_torque(Motor1, Motor2_Torque)
+            theta_torque = Extension_Flight_Theta_PD_Controller.update(theta,current_time)
+            rho_torque = Compression_Rho_PD_Controller.update(rho, current_time)
+
+            Motor1_Torque, Motor2_Torque = get_Torques_from_Wibblits(theta_torque, rho_torque)
+                        
+            set_torque(Motor1, Motor1_Torque)
+            set_torque(Motor2, Motor2_Torque)
 
             
         else:
             print("Phase state could not be determined.")
             
         #Redfine the inital motor positions
-        Initial_Centerbar_Length = Centerbar_Length
         Start_Time = New_Time
         Previous_State = State
     
 listener.join()
-
-set_position_control_mode(nodes[0])
-set_position_control_mode(nodes[1])
-
-set_position(nodes[0], initial_position)
-set_position(nodes[1], initial_position)
-
-time.sleep(1)
 
 set_idle(nodes[0])
 set_idle(nodes[1])

@@ -138,7 +138,7 @@ if __name__ == "__main__":
     set_position_control_mode(node_id_0)
     set_position_control_mode(node_id_1)
     
-    position = 0.2
+    position = 0.25
     offset = 0
     
     set_position(node_id_0, position)
