@@ -318,8 +318,8 @@ if __name__ == "__main__":
     State_Machine = Hopper_State_Machine()
     Previous_State = "idle"
     #Initalizing Toe Position PD controller in Extension
-    Extension_Flight_Target_Theta = 3.11
-    Extension_Flight_Target_Rho = 2.8
+    Extension_Flight_Target_Theta = 3.14
+    Extension_Flight_Target_Rho = 3.2
     Extension_Theta_PD_Controller = PDController(4, 0.15, Extension_Flight_Target_Theta)
     Extension_Rho_PD_Controller = PDController(4, 0.15, Extension_Flight_Target_Rho)
 
@@ -328,10 +328,10 @@ if __name__ == "__main__":
     Flight_Rho_PD_Controller = PDController(1.5,0.15, Extension_Flight_Target_Rho)
     
     #Initalizing Centerbar PD Controller in Compression
-    Compression_Target_Theta = 3.11
+    Compression_Target_Theta = 3.14
     Compression_Target_Rho = 0.8
-    Compression_Theta_PD_Controller = PDController(0.1,0.15,Compression_Target_Theta)
-    Compression_Rho_PD_Controller = PDController(0.1,0.15,Compression_Target_Rho)
+    Compression_Theta_PD_Controller = PDController(0.09,0.05,Compression_Target_Theta)
+    Compression_Rho_PD_Controller = PDController(0.09,0.05,Compression_Target_Rho)
     
 
     #Set Closed Loop Control
