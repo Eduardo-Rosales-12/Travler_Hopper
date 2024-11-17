@@ -44,28 +44,45 @@ class PDController:
 class Hopper_State_Machine:
     def __init__(self):
         self.state = "idle"
+        self.state_start_time = None
+        self.state_durations = {}
+
 
     
-    def get_state(self, rho, Force_Estimate, Previous_State, latch_status):
-        Extension_Flight_Target_Rho = 2
-        Compression_Target_Rho = 0.8
-        Threshold = 200
+    def get_state(self, rho, current_time, Previous_State, latch_status):
+        
+        if self.state != "idle":
+            duration = current_time - self.state_start_time
+            
+            if self.state in self.state_durations:
+                self.state_durations[self.state] += duration
+            else:
+                self.state_durations[self.state] = duration
+            
+        self.state_start_time = current_time
+            
+        Extension_Flight_Target_Rho = 2.8
+        Compression_Target_Rho = 0.82
+        Threshold = 20
 
         Compression_Rho_Error = abs(Compression_Target_Rho - rho)/Compression_Target_Rho
         Extension_Rho_Error = abs(Extension_Flight_Target_Rho - rho)/Extension_Flight_Target_Rho
-        
-        #print(Force_Estimate)
+        print(self.state_durations)
         if latch_status == 0: 
             return "idle"
         
         elif latch_status == 1:
-            if (Force_Estimate > Threshold): 
+            if (self.state == "flight" and self.state_durations['flight'] > 1):
+                self.state = "compression"
+                self.state_durations['flight'] = 0.0
                 return "compression"       
                 
-            elif (Compression_Rho_Error < 0.05):
+            elif (Compression_Rho_Error < 0.1):
+                self.state = "extension"
                 return "extension"
                 
-            elif (Extension_Rho_Error < 0.05):
+            elif (Extension_Rho_Error < 0.1):
+                self.state = "flight"
                 return "flight"
                 
             else:
@@ -78,7 +95,7 @@ def get_state_variables(encoder0_pos_estimate, encoder1_pos_estimate, encoder0_v
     #Converting the absolute encoder estimated into radians with refernce the the vertical axis (this is need as it was the way the jacobian was derived)
     phi_1 = (math.pi/2) + ((reference_point - encoder0_pos_estimate) * (math.pi*2))
     phi_2 = ((3*math.pi)/2) + ((encoder1_pos_estimate - reference_point) * (math.pi*2))
-q
+
     #The velcoities estimates must be slightly modified to get ensure that they corespond to the definition of phi_1 and phi_2
     #The velocity of encoder1 must be switched to negative as phi2 is measured cw with respect to the vertical axis but the encoder velocity is 
     #taken ccw with respect to the absolute zero position. 
@@ -301,13 +318,13 @@ if __name__ == "__main__":
     State_Machine = Hopper_State_Machine()
     Previous_State = "idle"
     #Initalizing Toe Position PD controller in Flight
-    Extension_Flight_Target_Theta = 3.14
+    Extension_Flight_Target_Theta = 3.11
     Extension_Flight_Target_Rho = 2.8
-    Extension_Flight_Theta_PD_Controller = PDController(6,0.2,Extension_Flight_Target_Theta)
-    Extension_Flight_Rho_PD_Controller = PDController(6,0.2,Extension_Flight_Target_Rho)
+    Extension_Flight_Theta_PD_Controller = PDController(5,0.2, Extension_Flight_Target_Theta)
+    Extension_Flight_Rho_PD_Controller = PDController(5,0.2, Extension_Flight_Target_Rho)
 
     #Initalizing Centerbar PD Controller in Compression
-    Compression_Target_Theta = 3.14
+    Compression_Target_Theta = 3.11
     Compression_Target_Rho = 0.8
     Compression_Theta_PD_Controller = PDController(1,0.2,Compression_Target_Theta)
     Compression_Rho_PD_Controller = PDController(1,0.2,Compression_Target_Rho)
@@ -343,6 +360,7 @@ if __name__ == "__main__":
     Extension_Tracker = False
     Compression_Tracker = False 
     
+
     while running:
         #grab initial motor position estimate 
         motor1_pos, motor1_vel = get_encoder_estimate(Motor1)
@@ -352,23 +370,24 @@ if __name__ == "__main__":
         
         #Calculate the length of the centerbar length 
         Leg_Geometry, phi_1, phi_2, phi_1_vel, phi_2_vel, theta, rho, theta_vel, rho_vel  = get_state_variables(motor1_pos, motor2_pos, motor1_vel, motor2_vel)
-        print(theta, rho)
+        #print(theta, rho)
         #Calculate Force 
         Jacobian = get_Jacobian(Leg_Geometry["Leg Length"], Leg_Geometry["Leg Angle"], Leg_Geometry["Beta"])
         Force_z = get_Forces(Jacobian, [[motor1_tor], [motor2_tor]])
 
-        #Check and save the system state
-        State =  State_Machine.get_state(rho, Force_z, Previous_State, latch_status)
-        print(State)
-
         #Determine elapsed time
         New_Time = time.perf_counter()
         elapsed_time = New_Time - Elapsed_Start_Time
+
+        #Check and save the system state
+        State =  State_Machine.get_state(rho, New_Time, Previous_State, latch_status)
+        print(State)
         
+                
         #Save Data
         data_log.append([elapsed_time, motor1_pos, motor2_pos, motor1_tor, motor2_tor, State])
 
-
+        
         if State == "idle":
             latch_status = 1
             #State = "compression"
@@ -391,7 +410,7 @@ if __name__ == "__main__":
             current_time = time.time()
             
             theta_torque = Extension_Flight_Theta_PD_Controller.update(theta,current_time)
-            rho_torque = Compression_Rho_PD_Controller.update(rho, current_time)
+            rho_torque = Extension_Flight_Rho_PD_Controller.update(rho, current_time)
 
             Motor1_Torque, Motor2_Torque = get_Torques_from_Wibblits(theta_torque, rho_torque)
                         
@@ -403,7 +422,7 @@ if __name__ == "__main__":
             current_time = time.time()
             
             theta_torque = Extension_Flight_Theta_PD_Controller.update(theta,current_time)
-            rho_torque = Compression_Rho_PD_Controller.update(rho, current_time)
+            rho_torque = Extension_Flight_Rho_PD_Controller.update(rho, current_time)
 
             Motor1_Torque, Motor2_Torque = get_Torques_from_Wibblits(theta_torque, rho_torque)
                         
