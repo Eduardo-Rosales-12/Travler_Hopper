@@ -1,4 +1,3 @@
-import csv  # Added import
 import can
 import struct
 import time
@@ -6,6 +5,7 @@ import math
 import numpy as np
 from datetime import datetime
 import os
+import csv
 
 class PDController:
     def __init__(self, Kp, Kd, setpoint):
@@ -79,25 +79,18 @@ def set_idle(node_id):
         data=struct.pack('<I', 1),
         is_extended_id=False
     ))
-# Function for encoder estimates with error handling
+    
 def encoder_estimates(node_id):
     bus.send(can.Message(
         arbitration_id=(node_id << 5 | 0x09),
         data=b'',
         is_extended_id=False
     ))
-    msg = bus.recv(timeout=1.0)  # Added a timeout
-    if msg and msg.arbitration_id == (node_id << 5 | 0x09):
-        try:
+    for msg in bus:
+        if msg.arbitration_id == (node_id << 5 | 0x09):
             pos_return_value, vel_return_value = struct.unpack_from('<ff', msg.data)
             return pos_return_value, vel_return_value
-        except struct.error:
-            print(f"Error unpacking data for node {node_id}: {msg.data}")
-            return None, None
-    else:
-        print(f"No response or invalid message for node {node_id}")
-        return None, None
-        
+
 def get_state_variables(encoder0_pos_estimate, encoder1_pos_estimate, encoder0_vel_estimate, encoder1_vel_estimate):
     reference_point = 0.25
     phi_1 = (math.pi / 2) + ((reference_point - encoder0_pos_estimate) * (math.pi * 2))
@@ -134,8 +127,8 @@ if __name__ == "__main__":
     target_rho = 3.0
     target_theta = 3.14
     
-    Theta_PD_Controller = PDController(5, 0.05, target_theta)
-    Rho_PD_Controller = PDController(5, 0.2, target_rho)
+    Theta_PD_Controller = PDController(1, 0.05, target_theta)
+    Rho_PD_Controller = PDController(1, 0.05, target_rho)
     
     bus = can.interface.Bus("can0", interface="socketcan")
     
@@ -148,29 +141,28 @@ if __name__ == "__main__":
     set_closed_loop_control(Motor1)
     set_torque_control_mode(Motor0)
     set_torque_control_mode(Motor1)
-    
-    # Setup data log
+
+        # Setup data log
     data_log = []
 
     # Determine elapsed time
     New_Time = time.perf_counter()
     Elapsed_Start_Time = time.perf_counter()
     
+    
     try:
         while True:
             New_Time = time.perf_counter()  # Update time inside loop
-            
             current_position_0, current_velocity_0 = encoder_estimates(Motor0)
             current_position_1, current_velocity_1 = encoder_estimates(Motor1)
-
-            elapsed_time = New_Time - Elapsed_Start_Time
             
-            phi_1, phi_2, phi_1_vel, phi_2_vel, theta, rho, theta_vel, rho_vel = get_state_variables(
-                current_position_0, current_position_1, current_velocity_0, current_velocity_1
-            )
+            elapsed_time = New_Time - Elapsed_Start_Time
+            current_time = time.time()  
+            
+            phi_1, phi_2, phi_1_vel, phi_2_vel, theta, rho, theta_vel, rho_vel = get_state_variables(current_position_0, current_position_1, current_velocity_0, current_velocity_1)
 
-            theta_torque = Theta_PD_Controller.update(theta, elapsed_time)
-            rho_torque = Rho_PD_Controller.update(rho, elapsed_time)
+            theta_torque = Theta_PD_Controller.update(theta,current_time)
+            rho_torque = Rho_PD_Controller.update(rho, current_time)
 
             Motor0_Torque, Motor1_Torque = get_torques(theta_torque, rho_torque)
             
@@ -178,13 +170,15 @@ if __name__ == "__main__":
             set_torque(Motor1, Motor1_Torque)
             
             data_log.append([elapsed_time, current_position_0, current_position_1, Motor0_Torque, Motor1_Torque])
+            
     except KeyboardInterrupt:
         print("Keyboard interrupt detected. Setting nodes to idle...")
         for node_id in nodes:
             set_idle(node_id)
         print("Nodes set to idle. Exiting program.")
-        
-        # Get the current date and time
+
+
+    # Get the current date and time
         now = datetime.now()
 
         # Format the filename
@@ -209,3 +203,4 @@ if __name__ == "__main__":
             writer.writerow(csv_header)
             writer.writerows(data_log)  # Combined writing rows into a single block
             print("Save Complete")
+
