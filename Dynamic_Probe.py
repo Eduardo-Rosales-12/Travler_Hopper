@@ -127,8 +127,8 @@ if __name__ == "__main__":
     target_rho = 3.16
     target_theta = 3.09
     
-    Theta_PD_Controller = PDController(5, 0.15, target_theta)
-    Rho_PD_Controller = PDController(5, 0.05, target_rho)
+    Theta_PD_Controller = PDController(4, 0.15, target_theta)
+    Rho_PD_Controller = PDController(4, 0.5, target_rho)
     
     bus = can.interface.Bus("can0", interface="socketcan")
     
@@ -182,10 +182,10 @@ if __name__ == "__main__":
         now = datetime.now()
 
         # Format the filename
-        filename = now.strftime("DROP-%H:%M_%m-%d.csv")
+        filename = now.strftime("DPROBE-%H:%M_%m-%d.csv")
 
         # Set up file to save data 
-        file_path = "/home/traveler/Downloads/Data/DROP/"
+        file_path = "/home/traveler/Downloads/Data/DPROBE/"
         
         # Ensure the directory exists
         os.makedirs(file_path, exist_ok=True)
@@ -203,4 +203,6 @@ if __name__ == "__main__":
             writer.writerow(csv_header)
             writer.writerows(data_log)  # Combined writing rows into a single block
             print("Save Complete")
+
+
 
