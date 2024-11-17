@@ -122,10 +122,10 @@ if __name__ == "__main__":
     nodes = [0, 1]
     
     target_rho = 2.8
-    target_theta = 3
+    target_theta = 3.14
     
-    Theta_PD_Controller = PDController(4, 0.2, target_theta)
-    Rho_PD_Controller = PDController(4, 0.2, target_rho)
+    Theta_PD_Controller = PDController(1.5, 0.15, target_theta)
+    Rho_PD_Controller = PDController(1.5, 0.15, target_rho)
     
     bus = can.interface.Bus("can0", interface="socketcan")
     

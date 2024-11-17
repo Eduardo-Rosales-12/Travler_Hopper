@@ -72,7 +72,7 @@ class Hopper_State_Machine:
             return "idle"
         
         elif latch_status == 1:
-            if (self.state == "flight" and self.state_durations['flight'] > 1):
+            if (self.state == "flight" and self.state_durations['flight'] > 0.5):
                 self.state = "compression"
                 self.state_durations['flight'] = 0.0
                 return "compression"       
@@ -317,17 +317,21 @@ if __name__ == "__main__":
     #Initalize state object 
     State_Machine = Hopper_State_Machine()
     Previous_State = "idle"
-    #Initalizing Toe Position PD controller in Flight
+    #Initalizing Toe Position PD controller in Extension
     Extension_Flight_Target_Theta = 3.11
     Extension_Flight_Target_Rho = 2.8
-    Extension_Flight_Theta_PD_Controller = PDController(5,0.2, Extension_Flight_Target_Theta)
-    Extension_Flight_Rho_PD_Controller = PDController(5,0.2, Extension_Flight_Target_Rho)
+    Extension_Theta_PD_Controller = PDController(4,0.15, Extension_Flight_Target_Theta)
+    Extension_Rho_PD_Controller = PDController(4,0.15, Extension_Flight_Target_Rho)
 
+    #Initializing PD controller in Flight
+    Flight_Theta_PD_Controller = PDController(1.5,0.15, Extension_Flight_Target_Theta)
+    Flight_Rho_PD_Controller = PDController(1.5,0.15, Extension_Flight_Target_Rho)
+    
     #Initalizing Centerbar PD Controller in Compression
     Compression_Target_Theta = 3.11
     Compression_Target_Rho = 0.8
-    Compression_Theta_PD_Controller = PDController(1,0.2,Compression_Target_Theta)
-    Compression_Rho_PD_Controller = PDController(1,0.2,Compression_Target_Rho)
+    Compression_Theta_PD_Controller = PDController(0.1,0.15,Compression_Target_Theta)
+    Compression_Rho_PD_Controller = PDController(0.1,0.15,Compression_Target_Rho)
     
 
     #Set Closed Loop Control
@@ -409,8 +413,8 @@ if __name__ == "__main__":
             #State_Machine.extension()
             current_time = time.time()
             
-            theta_torque = Extension_Flight_Theta_PD_Controller.update(theta,current_time)
-            rho_torque = Extension_Flight_Rho_PD_Controller.update(rho, current_time)
+            theta_torque = Extension_Theta_PD_Controller.update(theta,current_time)
+            rho_torque = Extension_Rho_PD_Controller.update(rho, current_time)
 
             Motor1_Torque, Motor2_Torque = get_Torques_from_Wibblits(theta_torque, rho_torque)
                         
@@ -421,8 +425,8 @@ if __name__ == "__main__":
             #State_Machine.extension()
             current_time = time.time()
             
-            theta_torque = Extension_Flight_Theta_PD_Controller.update(theta,current_time)
-            rho_torque = Extension_Flight_Rho_PD_Controller.update(rho, current_time)
+            theta_torque = Flight_Theta_PD_Controller.update(theta,current_time)
+            rho_torque = Flight_Rho_PD_Controller.update(rho, current_time)
 
             Motor1_Torque, Motor2_Torque = get_Torques_from_Wibblits(theta_torque, rho_torque)
                         
