@@ -72,7 +72,7 @@ class Hopper_State_Machine:
             return "idle"
         
         elif latch_status == 1:
-            if (self.state == "flight" and self.state_durations['flight'] > 0.5):
+            if (self.state == "flight" and self.state_durations['flight'] > 0.3):
                 self.state = "compression"
                 self.state_durations['flight'] = 0.0
                 return "compression"       
@@ -320,8 +320,8 @@ if __name__ == "__main__":
     #Initalizing Toe Position PD controller in Extension
     Extension_Flight_Target_Theta = 3.11
     Extension_Flight_Target_Rho = 2.8
-    Extension_Theta_PD_Controller = PDController(4,0.15, Extension_Flight_Target_Theta)
-    Extension_Rho_PD_Controller = PDController(4,0.15, Extension_Flight_Target_Rho)
+    Extension_Theta_PD_Controller = PDController(4, 0.15, Extension_Flight_Target_Theta)
+    Extension_Rho_PD_Controller = PDController(4, 0.15, Extension_Flight_Target_Rho)
 
     #Initializing PD controller in Flight
     Flight_Theta_PD_Controller = PDController(1.5,0.15, Extension_Flight_Target_Theta)
