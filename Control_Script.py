@@ -50,46 +50,45 @@ class Hopper_State_Machine:
 
     
     def get_state(self, rho, current_time, Previous_State, latch_status):
+            if self.state != "idle":
+                    # Update the duration of the current state
+                    duration = current_time - self.state_start_time
+                    if self.state in self.state_durations:
+                        self.state_durations[self.state] += duration
+                    else:
+                        self.state_durations[self.state] = duration
+                        
+            # Update the start time of the current state
+            self.state_start_time = current_time
+
+            # Define the rho thresholds for transitions
+            Compression_Threshold_Rho = 0.8
+            Extension_Threshold_Rho = 3.14
+
+            # Print the state durations for debugging
+            print(self.state_durations)
+
+            # If latch_status is 0, remain in "idle"
+            if latch_status == 0:
+                return "idle"
+                print(latch_status)
+         # Determine the state transitions based on rho
+            if latch_status == 1:
+                print(latch_status)
+                if self.state == "flight" and rho <= Compression_Threshold_Rho:
+                    self.state = "compression"
+                    return "compression"
         
-        if self.state != "idle":
-            duration = current_time - self.state_start_time
-            
-            if self.state in self.state_durations:
-                self.state_durations[self.state] += duration
-            else:
-                self.state_durations[self.state] = duration
-            
-        self.state_start_time = current_time
-            
-        Extension_Flight_Target_Rho = 2.8
-        Compression_Target_Rho = 0.82
-        Threshold = 20
+                elif self.state == "compression" and rho > Compression_Threshold_Rho:
+                    self.state = "extension"
+                    return "extension"
 
-        Compression_Rho_Error = abs(Compression_Target_Rho - rho)/Compression_Target_Rho
-        Extension_Rho_Error = abs(Extension_Flight_Target_Rho - rho)/Extension_Flight_Target_Rho
-        print(self.state_durations)
-        if latch_status == 0: 
-            return "idle"
-        
-        elif latch_status == 1:
-            if (self.state == "flight" and self.state_durations['flight'] > 0.3):
-                self.state = "compression"
-                self.state_durations['flight'] = 0.0
-                return "compression"       
-                
-            elif (Compression_Rho_Error < 0.1):
-                self.state = "extension"
-                return "extension"
-                
-            elif (Extension_Rho_Error < 0.1):
-                self.state = "flight"
-                return "flight"
-                
-            else:
-                return Previous_State
+                elif self.state == "extension" and rho >= Extension_Threshold_Rho:
+                    self.state = "flight"
+                    return "flight"
 
-
-
+                else:
+                    return Previous_State
 def get_state_variables(encoder0_pos_estimate, encoder1_pos_estimate, encoder0_vel_estimate, encoder1_vel_estimate):
     reference_point = 0.25
     #Converting the absolute encoder estimated into radians with refernce the the vertical axis (this is need as it was the way the jacobian was derived)
@@ -398,7 +397,7 @@ if __name__ == "__main__":
 
         elif State == "compression":
             #State_Machine.compression()
-            current_time = time.time()  
+            current_time = time.time()
             
             theta_torque = Compression_Theta_PD_Controller.update(theta,current_time)
             rho_torque = Compression_Rho_PD_Controller.update(rho, current_time)
@@ -465,3 +464,4 @@ with open(file_path, mode='a', newline='') as file:
     writer.writerows(data_log)
 print("Save Complete")
 
+q

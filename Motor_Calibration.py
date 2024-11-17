@@ -77,7 +77,7 @@ def dump_errors(node_id, path):
     
 
     
-node_id = 0 # must match the configured node_id on your ODrive (default 0)
+node_id = 1 # must match the configured node_id on your ODrive (default 0)
 # -- end definitions
 
 import can
