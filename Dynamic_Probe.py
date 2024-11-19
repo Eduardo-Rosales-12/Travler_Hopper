@@ -125,10 +125,10 @@ if __name__ == "__main__":
     nodes = [0, 1]
     
     target_rho = 3.16
-    target_theta = 3.09
+    target_theta = 3.1
     
-    Theta_PD_Controller = PDController(4, 0.15, target_theta)
-    Rho_PD_Controller = PDController(4, 0.5, target_rho)
+    Theta_PD_Controller = PDController(2.5, 0.25, target_theta)
+    Rho_PD_Controller = PDController(2.5, 0.25, target_rho)
     
     bus = can.interface.Bus("can0", interface="socketcan")
     
@@ -203,6 +203,5 @@ if __name__ == "__main__":
             writer.writerow(csv_header)
             writer.writerows(data_log)  # Combined writing rows into a single block
             print("Save Complete")
-
 
 
