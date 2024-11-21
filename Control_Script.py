@@ -8,7 +8,9 @@ import argparse
 from odrive.enums import *
 import matplotlib.pyplot as plt
 from pynput import keyboard
-import csv 
+import csv
+import os 
+from datetime import datetime
 
 class PDController:
     def __init__(self, Kp, Kd, setpoint):
@@ -388,9 +390,11 @@ if __name__ == "__main__":
         State =  State_Machine.get_state(rho, New_Time, Previous_State, latch_status)
         print(State)
         
+        global_time = datetime.now()
+        formatted_global_time = global_time.strftime("%Y-%m-%d %H:%M:%S.%f")
                 
         #Save Data
-        data_log.append([elapsed_time, motor1_pos, motor2_pos, motor1_tor, motor2_tor, State])
+        data_log.append([formatted_global_time, elapsed_time, motor1_pos, motor2_pos, motor1_tor, motor2_tor, State])
 
         
         if State == "idle":
@@ -452,7 +456,7 @@ print("Motion Terminated")
 now = datetime.now()
 
 # Format the filename
-filename = now.strftime("DROP-%H:%M_%m-%d.csv")
+filename = now.strftime("HOP-%H:%M_%m-%d.csv")
 
 # Set up file to save data 
 file_path = "/home/traveler/Traveler_Hopper_sw-bundle/Data/HOP"
@@ -462,10 +466,10 @@ os.makedirs(file_path, exist_ok=True)
 
 full_path = os.path.join(file_path, filename)
 
-print("Saving Data to: " + file_path)
+print("Saving Data to: " + full_path)
 
 #define file header 
-csv_header = ['Time', 'Motor 0 Position', 'Motor 1 Poqsition', 'Motor 0 Torque','Motor 1 Torque', 'Force']
+csv_header = ['Global Time', 'Time', 'Motor 0 Position', 'Motor 1 Poqsition', 'Motor 0 Torque','Motor 1 Torque', 'Force']
 
 with open(full_path, mode='w', newline='') as file:
     writer = csv.writer(file)

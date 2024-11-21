@@ -6,6 +6,7 @@ import numpy as np
 from datetime import datetime
 import os
 import csv
+from datetime import datetime
 
 class PDController:
     def __init__(self, Kp, Kd, setpoint):
@@ -141,10 +142,10 @@ if __name__ == "__main__":
     nodes = [0, 1]
     
     target_rho = 3.16
-    target_theta = 3.1
+    target_theta = 3.295
     
-    Theta_PD_Controller = PDController(5, 0.15, target_theta)
-    Rho_PD_Controller = PDController(5, 0.05, target_rho)
+    Theta_PD_Controller = PDController(15, 0.15, target_theta)
+    Rho_PD_Controller = PDController(15, 0.05, target_rho)
     
     bus = can.interface.Bus("can0", interface="socketcan")
     
@@ -180,7 +181,10 @@ if __name__ == "__main__":
             
             phi_1, phi_2, phi_1_vel, phi_2_vel, theta, rho, theta_vel, rho_vel = get_state_variables(current_position_0, current_position_1, current_velocity_0, current_velocity_1)
 
-            data_log.append([elapsed_time, current_position_0, current_position_1, motor0_tor, motor1_tor])
+            global_time = datetime.now()
+            formatted_global_time = global_time.strftime("%Y-%m-%d %H:%M:%S.%f")
+            
+            data_log.append([formatted_global_time, elapsed_time, current_position_0, current_position_1, motor0_tor, motor1_tor])
 
             theta_torque = Theta_PD_Controller.update(theta,current_time)
             rho_torque = Rho_PD_Controller.update(rho, current_time)
@@ -216,7 +220,7 @@ if __name__ == "__main__":
         print("Saving Data to: " + full_path)
 
         # Define file header 
-        csv_header = ['Time', 'Motor 0 Position', 'Motor 1 Position', 'Motor 0 Torque', 'Motor 1 Torque']
+        csv_header = ['Global Time', 'Time', 'Motor 0 Position', 'Motor 1 Position', 'Motor 0 Torque', 'Motor 1 Torque']
 
         with open(full_path, mode='w', newline='') as file:
             writer = csv.writer(file)

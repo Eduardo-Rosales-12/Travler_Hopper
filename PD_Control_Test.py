@@ -122,7 +122,7 @@ if __name__ == "__main__":
     nodes = [0, 1]
     
     target_rho = 3.0
-    target_theta = 3.1
+    target_theta = 3.32
     
     Theta_PD_Controller = PDController(1, 0.05, target_theta)
     Rho_PD_Controller = PDController(1, 0.05, target_rho)
