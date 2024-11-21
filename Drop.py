@@ -90,6 +90,22 @@ def encoder_estimates(node_id):
         if msg.arbitration_id == (node_id << 5 | 0x09):
             pos_return_value, vel_return_value = struct.unpack_from('<ff', msg.data)
             return pos_return_value, vel_return_value
+        
+def get_torque_estimate(node_id):
+
+    bus.send(can.Message(
+        arbitration_id=(node_id << 5 | 0x1c), 
+        data=b'',
+        is_extended_id=False
+    ))
+
+    for msg in bus:
+        if msg.arbitration_id == (node_id << 5 | 0x1c): 
+            break
+    
+    torque_target, torque_return_value = struct.unpack_from('<ff', msg.data)
+
+    return torque_return_value
 
 def get_state_variables(encoder0_pos_estimate, encoder1_pos_estimate, encoder0_vel_estimate, encoder1_vel_estimate):
     reference_point = 0.25
@@ -155,11 +171,16 @@ if __name__ == "__main__":
             New_Time = time.perf_counter()  # Update time inside loop
             current_position_0, current_velocity_0 = encoder_estimates(Motor0)
             current_position_1, current_velocity_1 = encoder_estimates(Motor1)
+            motor0_tor = get_torque_estimate(Motor0)
+            motor1_tor = get_torque_estimate(Motor1)
             
             elapsed_time = New_Time - Elapsed_Start_Time
             current_time = time.time()  
             
+            
             phi_1, phi_2, phi_1_vel, phi_2_vel, theta, rho, theta_vel, rho_vel = get_state_variables(current_position_0, current_position_1, current_velocity_0, current_velocity_1)
+
+            data_log.append([elapsed_time, current_position_0, current_position_1, motor0_tor, motor1_tor])
 
             theta_torque = Theta_PD_Controller.update(theta,current_time)
             rho_torque = Rho_PD_Controller.update(rho, current_time)
@@ -169,7 +190,6 @@ if __name__ == "__main__":
             set_torque(Motor0, Motor0_Torque)
             set_torque(Motor1, Motor1_Torque)
             
-            data_log.append([elapsed_time, current_position_0, current_position_1, Motor0_Torque, Motor1_Torque])
             
     except KeyboardInterrupt:
         print("Keyboard interrupt detected. Setting nodes to idle...")
@@ -178,7 +198,7 @@ if __name__ == "__main__":
         print("Nodes set to idle. Exiting program.")
 
 
-    # Get the current date and time
+        # Get the current date and time
         now = datetime.now()
 
         # Format the filename

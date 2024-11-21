@@ -448,20 +448,29 @@ set_idle(nodes[0])
 set_idle(nodes[1])
 print("Motion Terminated")
 
-#Set up file to save data 
-file_path = "/home/traveler/Downloads/Data/06:05:-11-10-24.csv"
+# Get the current date and time
+now = datetime.now()
 
-#Start Logging Data
+# Format the filename
+filename = now.strftime("DROP-%H:%M_%m-%d.csv")
+
+# Set up file to save data 
+file_path = "/home/traveler/Downloads/Data/DROP/"
+
+# Ensure the directory exists
+os.makedirs(file_path, exist_ok=True)
+
+full_path = os.path.join(file_path, filename)
+
 print("Saving Data to: " + file_path)
 
 #define file header 
 csv_header = ['Time', 'Motor 0 Position', 'Motor 1 Poqsition', 'Motor 0 Torque','Motor 1 Torque', 'Force']
 
-with open(file_path, mode='w', newline='') as file:
+with open(full_path, mode='w', newline='') as file:
     writer = csv.writer(file)
     writer.writerow(csv_header)
-    
-with open(file_path, mode='a', newline='') as file:
-    writer = csv.writer(file)
-    writer.writerows(data_log)
+    writer.writerows(data_log)  # Combined writing rows into a single block
+    print("Save Complete")
+        
 print("Save Complete")
