@@ -203,7 +203,7 @@ if __name__ == "__main__":
         filename = now.strftime("DPROBE-%H:%M_%m-%d.csv")
 
         # Set up file to save data 
-        file_path = "/home/traveler/Downloads/Data/DPROBE/"
+        file_path = "/home/traveler/Traveler_Hopper_sw-bundle/Data/DPROBE"
         
         # Ensure the directory exists
         os.makedirs(file_path, exist_ok=True)

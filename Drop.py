@@ -205,7 +205,7 @@ if __name__ == "__main__":
         filename = now.strftime("DROP-%H:%M_%m-%d.csv")
 
         # Set up file to save data 
-        file_path = "/home/traveler/Downloads/Data/DROP/"
+        file_path = "/home/traveler/Traveler_Hopper_sw-bundle/Data/DROP"
         
         # Ensure the directory exists
         os.makedirs(file_path, exist_ok=True)
