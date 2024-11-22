@@ -9,7 +9,7 @@ from odrive.enums import *
 import matplotlib.pyplot as plt
 from pynput import keyboard
 import csv
-import os 
+import os
 from datetime import datetime
 
 class PDController:
@@ -63,8 +63,8 @@ class Hopper_State_Machine:
             
         self.state_start_time = current_time
             
-        Extension_Flight_Target_Rho = 3.2
-        Compression_Target_Rho = 0.75
+        Extension_Flight_Target_Rho = 3
+        Compression_Target_Rho = 0.68
         Threshold = 20
 
         Compression_Rho_Error = abs(Compression_Target_Rho - rho)/Compression_Target_Rho
@@ -79,8 +79,9 @@ class Hopper_State_Machine:
                 self.state_durations['flight'] = 0.0
                 return "compression"       
                 
-            elif (Compression_Rho_Error < 0.1):
+            elif (Compression_Rho_Error < 0.11):
                 self.state = "extension"
+                print(Compression_Rho_Error)
                 return "extension"
                 
             elif (Extension_Rho_Error < 0.1):
@@ -123,6 +124,7 @@ def get_state_variables(encoder0_pos_estimate, encoder1_pos_estimate, encoder0_v
     #Using the calculated values for phi1 and phi2 the new coordinate system can be calculated in terms of theta and rho (aka wibblets)
     theta = 0.5*(phi_1 + phi_2)
     rho = 0.5*(phi_1 - phi_2) + math.pi
+    print(rho)
 
     #set up jacobian to convert polar to wibblit system
     Jacobian = np.array([[0.5, 0.5], [0.5, -0.5]])
@@ -320,18 +322,18 @@ if __name__ == "__main__":
     State_Machine = Hopper_State_Machine()
     Previous_State = "idle"
     #Initalizing Toe Position PD controller in Extension
-    Extension_Flight_Target_Theta = 3.1
-    Extension_Flight_Target_Rho = 3.2
+    Extension_Flight_Target_Theta = 3.13
+    Extension_Flight_Target_Rho = 3
     Extension_Theta_PD_Controller = PDController(4, 0.15, Extension_Flight_Target_Theta)
     Extension_Rho_PD_Controller = PDController(4, 0.15, Extension_Flight_Target_Rho)
 
     #Initializing PD controller in Flight
-    Flight_Theta_PD_Controller = PDController(1.5,0.15, Extension_Flight_Target_Theta)
-    Flight_Rho_PD_Controller = PDController(1.5,0.15, Extension_Flight_Target_Rho)
+    Flight_Theta_PD_Controller = PDController(0.5,0.15, Extension_Flight_Target_Theta)
+    Flight_Rho_PD_Controller = PDController(0.5,0.15, Extension_Flight_Target_Rho)
     
     #Initalizing Centerbar PD Controller in Compression
-    Compression_Target_Theta = 3.1
-    Compression_Target_Rho = 0.75
+    Compression_Target_Theta = 3.13
+    Compression_Target_Rho = 0.68
     Compression_Theta_PD_Controller = PDController(0.09,0.05,Compression_Target_Theta)
     Compression_Rho_PD_Controller = PDController(0.09,0.05,Compression_Target_Rho)
     

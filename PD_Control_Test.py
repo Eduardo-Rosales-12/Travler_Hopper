@@ -121,8 +121,8 @@ if __name__ == "__main__":
     soft_start_duration = 2.0
     nodes = [0, 1]
     
-    target_rho = 3.0
-    target_theta = 3.32
+    target_rho = 3
+    target_theta = 3.13
     
     Theta_PD_Controller = PDController(1, 0.05, target_theta)
     Rho_PD_Controller = PDController(1, 0.05, target_rho)
