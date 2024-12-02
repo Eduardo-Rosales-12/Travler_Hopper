@@ -274,20 +274,8 @@ def get_Forces(Jacobian, Torque_Vector):
 
     return Force_Magnitude
 
-def on_press(key):
-    global running
-    try:
-        if key.char == 'q':
-            print("Stop Running Script")
-            running = False
-            return False
-    except AttributeError:
-        pass
         
 if __name__ == "__main__":
-    #Set up keyboard listener
-    listener = keyboard.Listener(on_press=on_press)
-    listener.start()
     running = True 
 
     nodes = [0, 1]  # Node IDs for node 0 and node 1
@@ -368,7 +356,7 @@ if __name__ == "__main__":
     Extension_Tracker = False
     Compression_Tracker = False 
     
-
+try:
     while running:
         #grab initial motor position estimate 
         motor1_pos, motor1_vel = get_encoder_estimate(Motor1)
@@ -448,11 +436,11 @@ if __name__ == "__main__":
         Start_Time = New_Time
         Previous_State = State
     
-listener.join()
-
-set_idle(nodes[0])
-set_idle(nodes[1])
-print("Motion Terminated")
+except KeyboardInterrupt:
+    print("Keyboard interrupt detected. Setting nodes to idle...")
+    for node_id in nodes:
+        set_idle(node_id)
+    print("Nodes set to idle. Exiting program.")
 
 # Get the current date and time
 now = datetime.now()
