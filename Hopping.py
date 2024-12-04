@@ -20,6 +20,7 @@ class PDController:
         self.prev_error = 0.0
         self.prev_time = None
 
+
     def update(self, measured_val, current_time):
         Proportional_Error = self.setpoint - measured_val
         
@@ -48,40 +49,68 @@ class Hopper_State_Machine:
         self.state = "idle"
         self.state_start_time = None
         self.state_durations = {}
-
+        self.prev_rho_dot = None
+        self.waiting = False
+        self.wait_start_time = None
+        self.wait_duration = 1  # Wait time in seconds
+        
     def get_state(self, rho, rho_dot, current_time, Previous_State, latch_status):
-        if self.state != "idle":
+        
+        if self.state_start_time is None:
+            self.state_start_time = current_time
+        
+        
+        if self.state != "idle" and not self.waiting:
             duration = current_time - self.state_start_time
             if self.state in self.state_durations:
                 self.state_durations[self.state] += duration
             else:
                 self.state_durations[self.state] = duration
-            self.state_start_time = current_time
-
-        Extension_Flight_Target_Rho = 3
-        Compression_Target_Rho = 0.68
-        Rho_Tolerance = 0.1  # Tolerance for rho matching targets
+                
+            
+        if self.prev_rho_dot is None:
+            self.prev_rho_dot = rho_dot
+            
+        Extension_Flight_Target_Rho = 2.9
+        Compression_Target_Rho = 0.7
+        Rho_Tolerance = 0.25  # Tolerance for rho matching targets
 
         Compression_Rho_Error = abs(Compression_Target_Rho - rho) / Compression_Target_Rho
         Extension_Rho_Error = abs(Extension_Flight_Target_Rho - rho) / Extension_Flight_Target_Rho
 
+        rho_dot_increasing = rho_dot > self.prev_rho_dot
+        rho_dot_decreasing = rho_dot < self.prev_rho_dot
+        
+        self.prev_rho_dot = rho_dot
+        
         if latch_status == 0: 
             return "idle"
 
         elif latch_status == 1:
+            
+            if self.waiting:
+                if current_time - self.wait_start_time >= self.wait_duration:
+                    self.waiting = False
+                    self.state = "extension"
+                    return "extension"
+                else:
+                    return "compression"
+                
             # Flight to compression: rho close to compression target and rho_dot negative
-            if (self.state == "flight" and Compression_Rho_Error < Rho_Tolerance and rho_dot < 0):
+            if (self.state == "flight" and Compression_Rho_Error < Rho_Tolerance and rho_dot_decreasing):
                 self.state = "compression"
                 return "compression"
 
             # Compression to extension: rho close to extension target and rho_dot positive
-            elif (Compression_Rho_Error < Rho_Tolerance and rho_dot > 0):
-                self.state = "extension"
-                return "extension"
+            elif (self.state == "compression" and Compression_Rho_Error < Rho_Tolerance and rho_dot_increasing):
+                self.waiting = True
+                self.wait_start_time = current_time
+                return "compression"
 
             # Maintain flight phase when rho close to flight target
             elif Extension_Rho_Error < Rho_Tolerance:
                 self.state = "flight"
+                self.state_start_time = current_time
                 return "flight"
 
             else:
@@ -288,21 +317,21 @@ if __name__ == "__main__":
 
     # Initialize state machine
     State_Machine = Hopper_State_Machine()
-    Previous_State = "idle"
+    Previous_State = "compression"
 
     # Initialize PD controllers
-    Extension_Flight_Target_Theta = 3.13
-    Extension_Flight_Target_Rho = 3
-    Extension_Theta_PD_Controller = PDController(4, 0.15, Extension_Flight_Target_Theta)
-    Extension_Rho_PD_Controller = PDController(4, 0.15, Extension_Flight_Target_Rho)
+    Extension_Flight_Target_Theta = 3.1637
+    Extension_Flight_Target_Rho = 3.05
+    Extension_Theta_PD_Controller = PDController(8, 0.15, Extension_Flight_Target_Theta)
+    Extension_Rho_PD_Controller = PDController(8, 0.15, Extension_Flight_Target_Rho)
 
-    Compression_Target_Theta = 3.13
-    Compression_Target_Rho = 0.68
-    Compression_Theta_PD_Controller = PDController(0.09, 0.05, Compression_Target_Theta)
-    Compression_Rho_PD_Controller = PDController(0.09, 0.05, Compression_Target_Rho)
+    Compression_Target_Theta = 3.1637
+    Compression_Target_Rho = 0.7
+    Compression_Theta_PD_Controller = PDController(0.5, 0.15, Compression_Target_Theta)
+    Compression_Rho_PD_Controller = PDController(0.5, 0.15, Compression_Target_Rho)
 
-    Flight_Theta_PD_Controller = PDController(0.5, 0.15, Extension_Flight_Target_Theta)
-    Flight_Rho_PD_Controller = PDController(0.5, 0.15, Extension_Flight_Target_Rho)
+    Flight_Theta_PD_Controller = PDController(0.55, 0.09, Extension_Flight_Target_Theta)
+    Flight_Rho_PD_Controller = PDController(0.55, 0.09, Extension_Flight_Target_Rho)
     
     # Initialize other parameters
     latch_status = 0
