@@ -1,78 +1,174 @@
-"""
-Minimal example for controlling an ODrive via the CANSimple protocol.
-
-Puts the ODrive into closed loop control mode, sends a velocity setpoint of 1.0
-and then prints the encoder feedback.
-
-Assumes that the ODrive is already configured for velocity control.
-
-See https://docs.odriverobotics.com/v/latest/manual/can-protocol.html for protocol
-documentation.
-"""
-
-import can
 import struct
+import json
 import time
+import can
+import traceback
 
-node_id_0 = 0 # must match `<odrv>.axis0.config.can.node_id`. The default is 0.
+# -- start load
+try:
+    with open('flat_endpoints.json', 'r') as f:
+        endpoint_data = json.load(f)
+        endpoints = endpoint_data['endpoints']
+except Exception as e:
+    print(f"Error loading configuration: {e}")
+    exit(1)
+# -- end load
 
-bus = can.interface.Bus("can0", interface="socketcan")
+# -- start definitions
+OPCODE_READ = 0x00
+OPCODE_WRITE = 0x01
 
+# Format lookup for data packing
+format_lookup = {
+    'bool': '?',
+    'uint8': 'B', 'int8': 'b',
+    'uint16': 'H', 'int16': 'h',
+    'uint32': 'I', 'int32': 'i',
+    'uint64': 'Q', 'int64': 'q',
+    'float': 'f'
+}
 
-# Flush CAN RX buffer so there are no more old pending messages
-while not (bus.recv(timeout=0) is None): pass
+def send_message(node_id, path, value):
+    try:
+        endpoint_id = endpoints[path]['id']
+        endpoint_type = endpoints[path]['type']
+        
+        # Send write command
+        bus.send(can.Message(
+            arbitration_id=(node_id << 5 | 0x04),
+            data=struct.pack('<BHB' + format_lookup[endpoint_type], OPCODE_WRITE, endpoint_id, 0, value),
+            is_extended_id=False
+        ))
+        
+        # Flush CAN RX buffer to clear old messages
+        while bus.recv(timeout=0) is not None:
+            pass
 
-# Put axis into closed loop control state
-bus.send(can.Message(
-    arbitration_id=(node_id_0 << 5 | 0x07), # 0x07: Set_Axis_State
-    data=struct.pack('<I', 8), # 8: AxisState.CLOSED_LOOP_CONTROL
-    is_extended_id=False
-))
+        # Send read command to confirm write
+        bus.send(can.Message(
+            arbitration_id=(node_id << 5 | 0x04),
+            data=struct.pack('<BHB', OPCODE_READ, endpoint_id, 0),
+            is_extended_id=False
+        ))
+        
+        # Await reply
+        for msg in bus:
+            if msg.arbitration_id == (node_id << 5 | 0x05):
+                break
 
+        # Print confirmation
+        _, _, _, return_value = struct.unpack_from('<BHB' + format_lookup[endpoint_type], msg.data)
+        print(f"Node {node_id} - {path} Received: {return_value}")
+    except Exception as e:
+        print(f"Error in send_message for node {node_id}, path '{path}': {e}")
+        traceback.print_exc()
 
-# Wait for axis to enter closed loop control by scanning heartbeat messages
-for msg in bus:
-    if msg.arbitration_id == (node_id_0 << 5 | 0x01): # 0x01: Heartbeat
-        error, state, result, traj_done = struct.unpack('<IBBB', bytes(msg.data[:7]))
-        if state == 8: # 8: AxisState.CLOSED_LOOP_CONTROL
-            break
- 
+def save_config(node_id, path):
+    try:
+        endpoint_id = endpoints[path]['id']
+        
+        while bus.recv(timeout=0) is not None:
+            pass
+        
+        # Send save command
+        bus.send(can.Message(
+            arbitration_id=(node_id << 5 | 0x16),
+            data=struct.pack('<I', 1),
+            is_extended_id=False
+        ))
+        
+        print(f"Node {node_id} - Configuration saved")
+    except Exception as e:
+        print(f"Error in save_config for node {node_id}, path '{path}': {e}")
+        traceback.print_exc()
 
-bus.send(can.Message(
-        arbitration_id=(node_id_0 << 5 | 0x0c), # 0x0c: Set_Input_Pos
-        data=struct.pack('<fhh', -0.1, int(1), int(2)), # Position: 0.5, feed forward velocity: 0, feed forward torque:)
-        is_extended_id=False
-))
-time.sleep(1)
+def calibrate_motor(node_id):
+    try:
+        # Command motor to enter full calibration
+        CALIBRATION_STATE = 3  # Assuming 3 corresponds to calibration state
+        
+        bus.send(can.Message(
+            arbitration_id=(node_id << 5 | 0x07),
+            data=struct.pack('<I', CALIBRATION_STATE),
+            is_extended_id=False
+        ))
+        print(f"Motor {node_id} calibration started")
 
-# Velocity_Vector = [-1,1,-1,1,-1,1,-1,1,-1,1,-1,1,-1]
-# 
-# for Velocity in Velocity_Vector:
-#     
-#     # Set velocity to 1.0 turns/s
-#     bus.send(can.Message(
-#         arbitration_id=(node_id_0 << 5 | 0x0d), # 0x0d: Set_Input_Vel
-#         data=struct.pack('<ff', Velocity, 1), # 1.0: velocity, 0.0: torque feedforward
-#         is_extended_id=False
-#     ))
-#     
-#     time.sleep(1)
-# 
+        # Monitor for calibration completion by checking state change
+        for msg in bus:
+            if msg.arbitration_id == (node_id << 5 | 0x01):
+                error, state, result, traj_done = struct.unpack('<IBBB', bytes(msg.data[:7]))
+                if state != CALIBRATION_STATE:  # Exit loop when calibration finishes
+                    print(f"Motor {node_id} calibration complete")
+                    break
+    except Exception as e:
+        print(f"Error in calibrate_motor for node {node_id}: {e}")
+        traceback.print_exc()
 
+def main():
+    try:
+        node_id_0 = 0
+        node_id_1 = 1
 
-# 
-# # Put axis into closed loop control state
-bus.send(can.Message(
-    arbitration_id=(node_id_0 << 5 | 0x07), # 0x07: Set_Axis_State
-    data=struct.pack('<I', 1), # 8: AxisState.CLOSED_LOOP_CONTROL
-    is_extended_id=False
-))
+        global bus
+        bus = can.interface.Bus("can0", interface="socketcan")
+        
+        # -- start version check
+        while bus.recv(timeout=0) is not None:
+            pass
 
+        # Send version check
+        bus.send(can.Message(
+            arbitration_id=(node_id_0 << 5 | 0x00),
+            data=b'',
+            is_extended_id=False
+        ))
 
+        # Await version reply
+        for msg in bus:
+            if msg.arbitration_id == (node_id_0 << 5 | 0x00):
+                break
 
-# Print encoder feedback
-for msg in bus:
-    if msg.arbitration_id == (node_id_0 << 5 | 0x09): # 0x09: Get_Encoder_Estimates
-        pos, vel = struct.unpack('<ff', bytes(msg.data))
-        print(f"pos M1: {pos:.3f} [turns], vel: {vel:.3f} [turns/s]")
+        unpacked = struct.unpack('<BBBBBBBB', msg.data)
+        (_, hw_product_line, hw_version, hw_variant,
+         fw_major, fw_minor, fw_revision, fw_unreleased) = unpacked
 
+        assert endpoint_data['fw_version'] == f"{fw_major}.{fw_minor}.{fw_revision}", "Firmware version mismatch"
+        assert endpoint_data['hw_version'] == f"{hw_product_line}.{hw_version}.{hw_variant}", "Hardware version mismatch"
+        # -- end version check
+
+        # -- start write
+        path_pos = 'axis0.controller.config.pos_gain'
+        path_vel = 'axis0.controller.config.vel_gain'
+        path_int = 'axis0.controller.config.vel_integrator_gain'
+        path_save_config = 'save_configuration'
+
+        pos_gain = 120
+        vel_gain = 0.625
+        int_gain = 0
+
+        # Write gains and save for each motor
+        send_message(node_id_0, path_pos, pos_gain)
+        send_message(node_id_0, path_vel, vel_gain)
+        send_message(node_id_0, path_int, int_gain)
+        save_config(node_id_0, path_save_config)
+
+        send_message(node_id_1, path_pos, pos_gain)
+        send_message(node_id_1, path_vel, vel_gain)
+        send_message(node_id_1, path_int, int_gain)
+        save_config(node_id_1, path_save_config)
+
+        time.sleep(8.5)
+        # Calibrate each motor
+        calibrate_motor(node_id_0)
+        time.sleep(8.5)
+        calibrate_motor(node_id_1)
+        # -- end write
+
+        print("Success: All operations completed without errors.")
+    except Exception as e:
+        print(f"Error occurred in main: {e}")
+        traceback.print_exc()
+
+if __name__ == "__main__":
+    main()
