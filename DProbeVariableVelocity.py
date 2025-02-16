@@ -16,7 +16,6 @@ class PDController:
         self.prev_time = None
 
     def update(self, measured_val, current_time):
-        # Calculate error between current setpoint and measured value
         error = self.setpoint - measured_val
         
         if self.prev_time is None:
@@ -24,17 +23,15 @@ class PDController:
         else:
             dt = current_time - self.prev_time
 
-        # Derivative term (avoid division by zero)
         derivative = (error - self.prev_error) / dt if dt > 0 else 0.0
         
-        # PD control signal
         control_signal = self.Kp * error + self.Kd * derivative
         
         self.prev_error = error
         self.prev_time = current_time
-
+        
         return control_signal
-
+    
     def reset(self):
         self.prev_error = 0.0
         self.prev_time = None
@@ -45,7 +42,7 @@ def set_closed_loop_control(node_id):
         data=struct.pack('<I', 8),
         is_extended_id=False
     ))
-
+    
 def set_torque_control_mode(node_id):
     bus.send(can.Message(
         arbitration_id=(node_id << 5 | 0x0b),
@@ -136,7 +133,6 @@ def get_torques(theta_torque, rho_torque):
     return Motor0_Torque, Motor1_Torque
 
 if __name__ == "__main__":
-    # Duration for a soft start (if needed)
     soft_start_duration = 2.0
     nodes = [0, 1]
     
@@ -164,7 +160,6 @@ if __name__ == "__main__":
     init_pos1, init_vel1 = encoder_estimates(Motor1)
     _, _, _, _, initial_theta, initial_rho, _, _ = get_state_variables(init_pos0, init_pos1, init_vel0, init_vel1)
     
-    # Start the setpoints at the current measured state
     current_theta_setpoint = initial_theta
     current_rho_setpoint = initial_rho
 
@@ -180,37 +175,31 @@ if __name__ == "__main__":
     # Setup data logging
     data_log = []
     Elapsed_Start_Time = time.perf_counter()
-    last_setpoint_update_time = time.time()  # To update intermediate setpoints
+    last_setpoint_update_time = time.time()
 
     try:
         while True:
-            # Update the current time for control and setpoint ramping
             current_time = time.time()
             New_Time = time.perf_counter()
             
-            # ------------------------------
-            # Gradually update the PD controller setpoints
+            # Gradually update the setpoints to control velocity
             dt_setpoint = current_time - last_setpoint_update_time
             if dt_setpoint > 0:
-                # Ramp theta setpoint toward the final target
                 if current_theta_setpoint < final_target_theta:
                     current_theta_setpoint = min(current_theta_setpoint + desired_theta_velocity * dt_setpoint, final_target_theta)
                 elif current_theta_setpoint > final_target_theta:
                     current_theta_setpoint = max(current_theta_setpoint - desired_theta_velocity * dt_setpoint, final_target_theta)
                 
-                # Ramp rho setpoint toward the final target
                 if current_rho_setpoint < final_target_rho:
                     current_rho_setpoint = min(current_rho_setpoint + desired_rho_velocity * dt_setpoint, final_target_rho)
                 elif current_rho_setpoint > final_target_rho:
                     current_rho_setpoint = max(current_rho_setpoint - desired_rho_velocity * dt_setpoint, final_target_rho)
                 
-                # Update the PD controllers' setpoints with the new intermediate values
                 Theta_PD_Controller.setpoint = current_theta_setpoint
                 Rho_PD_Controller.setpoint = current_rho_setpoint
                 last_setpoint_update_time = current_time
-            # ------------------------------
 
-            # Read encoder estimates and torque feedback
+            # Read sensor feedback
             current_position_0, current_velocity_0 = encoder_estimates(Motor0)
             current_position_1, current_velocity_1 = encoder_estimates(Motor1)
             motor0_tor = get_torque_estimate(Motor0)
@@ -224,14 +213,35 @@ if __name__ == "__main__":
             # Compute state variables based on encoder data
             phi_1, phi_2, phi_1_vel, phi_2_vel, theta, rho, theta_vel, rho_vel = \
                 get_state_variables(current_position_0, current_position_1, current_velocity_0, current_velocity_1)
+            
+            # ---------------- Adaptive Gain Scheduling for Rho ----------------
+            # Assume that when rho is far from vertical (vertical_rho), gravity plays a bigger role.
+            base_rho_Kp = 3.0
+            base_rho_Kd = 0.35
+            vertical_rho = 1.57  # radians: configuration when the linkage is vertical
+            if abs(rho - vertical_rho) > 0.5:
+                adaptive_factor = 1.5
+            else:
+                adaptive_factor = 1.0
+            Rho_PD_Controller.Kp = base_rho_Kp * adaptive_factor
+            Rho_PD_Controller.Kd = base_rho_Kd * adaptive_factor
+            # --------------------------------------------------------------------
 
-            # Use the PD controllers (with gradually updated setpoints) to compute torques
+            # Compute PD outputs for theta and rho
             theta_torque = Theta_PD_Controller.update(theta, current_time)
-            rho_torque = Rho_PD_Controller.update(rho, current_time)
+            rho_torque   = Rho_PD_Controller.update(rho, current_time)
 
+            # ---------------- Feed-Forward Gravity Compensation ----------------
+            # Gravity feed-forward is added only to the rho channel.
+            # We assume gravity exerts no moment when rho == vertical_rho and increases with sin(angle from vertical).
+            gravity_gain = 2.0  # Tune this value based on your system
+            ff_rho = -gravity_gain * math.sin(rho - vertical_rho)
+            rho_torque = rho_torque + ff_rho
+            # ------------------------------------------------------------------
+
+            # Compute motor torques from the computed theta and rho torques
             Motor0_Torque, Motor1_Torque = get_torques(theta_torque, rho_torque)
             
-            # Send torque commands to the motors
             set_torque(Motor0, Motor0_Torque)
             set_torque(Motor1, Motor1_Torque)
             
@@ -241,7 +251,6 @@ if __name__ == "__main__":
             set_idle(node_id)
         print("Nodes set to idle. Exiting program.")
 
-        # Save the data log to a CSV file
         now = datetime.now()
         filename = now.strftime("DPROBE-%H:%M_%m-%d.csv")
         file_path = "/home/traveler/Traveler_Hopper_sw-bundle/Data/DPROBE"
