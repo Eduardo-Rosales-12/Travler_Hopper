@@ -118,14 +118,14 @@ def get_torques(theta_torque, rho_torque):
     return Motor0_Torque, Motor1_Torque
 
 if __name__ == "__main__":
-    soft_start_duration = 2.0
+    soft_start_duration = 0.0
     nodes = [0, 1]
     
-    target_rho = 3
-    target_theta = 3.13
+    target_rho = 2
+    target_theta = 3.14
     
-    Theta_PD_Controller = PDController(1, 0.05, target_theta)
-    Rho_PD_Controller = PDController(1, 0.05, target_rho)
+    Theta_PD_Controller = PDController(4, 0.07, target_theta)
+    Rho_PD_Controller = PDController(4, 0.07, target_rho)
     
     bus = can.interface.Bus("can0", interface="socketcan")
     

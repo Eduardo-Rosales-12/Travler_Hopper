@@ -133,12 +133,12 @@ def get_torques(theta_torque, rho_torque):
     return Motor0_Torque, Motor1_Torque
 
 if __name__ == "__main__":
-    soft_start_duration = 2.0
+    soft_start_duration = 0
     nodes = [0, 1]
     
     # Final desired targets (in radians)
-    final_target_rho = 3.16
-    final_target_theta = 3.323
+    final_target_rho = 2
+    final_target_theta = 3.14
 
     # Connect to the CAN bus
     bus = can.interface.Bus("can0", interface="socketcan")
@@ -164,12 +164,18 @@ if __name__ == "__main__":
     current_rho_setpoint = initial_rho
 
     # Define desired maximum velocities (setpoint update rates) in rad/s
-    desired_theta_velocity = 0.1  # Adjust as needed
-    desired_rho_velocity   = 0.1  # Adjust as needed
+    desired_theta_velocity = 1  # Adjust as needed
+    desired_rho_velocity   = 5  # Adjust as needed
 
     # Initialize PD controllers with the current (initial) setpoints
-    Theta_PD_Controller = PDController(3, 0.35, current_theta_setpoint)
-    Rho_PD_Controller   = PDController(3, 0.35, current_rho_setpoint)
+    thetaKp = 3
+    thetaKd = 0.25
+    rhoKp = 33
+    rhoKd = 0.25
+    
+    
+    Theta_PD_Controller = PDController(thetaKp, thetaKd, current_theta_setpoint)
+    Rho_PD_Controller   = PDController(rhoKp, rhoKd, current_rho_setpoint)
     # -------------------------------------------------------
 
     # Setup data logging
@@ -213,30 +219,13 @@ if __name__ == "__main__":
             # Compute state variables based on encoder data
             phi_1, phi_2, phi_1_vel, phi_2_vel, theta, rho, theta_vel, rho_vel = \
                 get_state_variables(current_position_0, current_position_1, current_velocity_0, current_velocity_1)
-            
-            # ---------------- Adaptive Gain Scheduling for Rho ----------------
-            # Assume that when rho is far from vertical (vertical_rho), gravity plays a bigger role.
-            base_rho_Kp = 3.0
-            base_rho_Kd = 0.35
-            vertical_rho = 1.57  # radians: configuration when the linkage is vertical
-            if abs(rho - vertical_rho) > 0.5:
-                adaptive_factor = 1.5
-            else:
-                adaptive_factor = 1.0
-            Rho_PD_Controller.Kp = base_rho_Kp * adaptive_factor
-            Rho_PD_Controller.Kd = base_rho_Kd * adaptive_factor
+        
             # --------------------------------------------------------------------
 
             # Compute PD outputs for theta and rho
             theta_torque = Theta_PD_Controller.update(theta, current_time)
             rho_torque   = Rho_PD_Controller.update(rho, current_time)
 
-            # ---------------- Feed-Forward Gravity Compensation ----------------
-            # Gravity feed-forward is added only to the rho channel.
-            # We assume gravity exerts no moment when rho == vertical_rho and increases with sin(angle from vertical).
-            gravity_gain = 2.0  # Tune this value based on your system
-            ff_rho = -gravity_gain * math.sin(rho - vertical_rho)
-            rho_torque = rho_torque + ff_rho
             # ------------------------------------------------------------------
 
             # Compute motor torques from the computed theta and rho torques
