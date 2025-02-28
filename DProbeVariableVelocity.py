@@ -1,16 +1,11 @@
-import tkinter as tk
-from tkinter import ttk, messagebox
-import threading
+import can
+import struct
 import time
 import math
 import numpy as np
-import can
-import struct
 from datetime import datetime
 import os
 import csv
-
-# -------------------------- Control Code --------------------------
 
 class PDController:
     def __init__(self, Kp, Kd, setpoint):
@@ -32,6 +27,7 @@ class PDController:
 
         self.prev_error = error
         self.prev_time = current_time
+        
         return control_signal
 
     def reset(self):
@@ -52,10 +48,24 @@ def set_torque_control_mode(node_id):
         is_extended_id=False
     ))
 
+def set_position_control_mode(node_id):
+    bus.send(can.Message(
+        arbitration_id=(node_id << 5 | 0x0b),
+        data=struct.pack('<II', 3, 1),
+        is_extended_id=False
+    ))
+
 def set_torque(node_id, torque):
     bus.send(can.Message(
         arbitration_id=(node_id << 5 | 0x0e),
         data=struct.pack('<f', torque),
+        is_extended_id=False
+    ))
+
+def set_position(node_id, position, ff_vel, ff_tor):
+    bus.send(can.Message(
+        arbitration_id=(node_id << 5 | 0x0c),
+        data=struct.pack('<fhh', position, int(ff_vel), ff_tor),
         is_extended_id=False
     ))
 
@@ -79,12 +89,12 @@ def encoder_estimates(node_id):
 
 def get_torque_estimate(node_id):
     bus.send(can.Message(
-        arbitration_id=(node_id << 5 | 0x1c),
+        arbitration_id=(node_id << 5 | 0x1c), 
         data=b'',
         is_extended_id=False
     ))
     for msg in bus:
-        if msg.arbitration_id == (node_id << 5 | 0x1c):
+        if msg.arbitration_id == (node_id << 5 | 0x1c): 
             break
     torque_target, torque_return_value = struct.unpack_from('<ff', msg.data)
     return torque_return_value
@@ -133,13 +143,12 @@ if __name__ == "__main__":
     while not (bus.recv(timeout=0) is None):
         pass
 
-        nodes = [0, 1]
-        Motor0, Motor1 = nodes[0], nodes[1]
+    Motor0, Motor1 = nodes[0], nodes[1]
 
-        set_closed_loop_control(Motor0)
-        set_closed_loop_control(Motor1)
-        set_torque_control_mode(Motor0)
-        set_torque_control_mode(Motor1)
+    set_closed_loop_control(Motor0)
+    set_closed_loop_control(Motor1)
+    set_torque_control_mode(Motor0)
+    set_torque_control_mode(Motor1)
 
     # -------------------------------------------------------
     # Get the current state to initialize the setpoints.
@@ -154,7 +163,8 @@ if __name__ == "__main__":
     desired_theta_velocity = 0.1  # Adjust as needed
     desired_rho_velocity   = 0.1  # Adjust as needed
 
-    # Initialize PD controllers with the current (initial) setpoints
+    # Initialize PD controllers with the current (initial) setpoints.
+    # The gains remain constant here.
     Theta_PD_Controller = PDController(3, 0.35, current_theta_setpoint)
     Rho_PD_Controller   = PDController(3, 0.35, current_rho_setpoint)
     # -------------------------------------------------------
@@ -164,23 +174,23 @@ if __name__ == "__main__":
     Elapsed_Start_Time = time.perf_counter()
     last_setpoint_update_time = time.time()
 
-        while not stop_control:
+    try:
+        while True:
             current_time = time.time()
-            perf_time = time.perf_counter()
+            New_Time = time.perf_counter()
             
-            # Ramp the setpoints gradually (simple linear update)
+            # Gradually update the setpoints to control velocity
             dt_setpoint = current_time - last_setpoint_update_time
             if dt_setpoint > 0:
-                # Update theta setpoint
-                if current_theta_setpoint < params['theta_setpoint']:
-                    current_theta_setpoint = min(current_theta_setpoint + desired_theta_velocity * dt_setpoint, params['theta_setpoint'])
-                elif current_theta_setpoint > params['theta_setpoint']:
-                    current_theta_setpoint = max(current_theta_setpoint - desired_theta_velocity * dt_setpoint, params['theta_setpoint'])
-                # Update rho setpoint
-                if current_rho_setpoint < params['rho_setpoint']:
-                    current_rho_setpoint = min(current_rho_setpoint + desired_rho_velocity * dt_setpoint, params['rho_setpoint'])
-                elif current_rho_setpoint > params['rho_setpoint']:
-                    current_rho_setpoint = max(current_rho_setpoint - desired_rho_velocity * dt_setpoint, params['rho_setpoint'])
+                if current_theta_setpoint < final_target_theta:
+                    current_theta_setpoint = min(current_theta_setpoint + desired_theta_velocity * dt_setpoint, final_target_theta)
+                elif current_theta_setpoint > final_target_theta:
+                    current_theta_setpoint = max(current_theta_setpoint - desired_theta_velocity * dt_setpoint, final_target_theta)
+                
+                if current_rho_setpoint < final_target_rho:
+                    current_rho_setpoint = min(current_rho_setpoint + desired_rho_velocity * dt_setpoint, final_target_rho)
+                elif current_rho_setpoint > final_target_rho:
+                    current_rho_setpoint = max(current_rho_setpoint - desired_rho_velocity * dt_setpoint, final_target_rho)
                 
                 Theta_PD_Controller.setpoint = current_theta_setpoint
                 Rho_PD_Controller.setpoint = current_rho_setpoint
@@ -192,188 +202,41 @@ if __name__ == "__main__":
             motor0_tor = get_torque_estimate(Motor0)
             motor1_tor = get_torque_estimate(Motor1)
             
-            elapsed_time = perf_time - start_time
-            global_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
-            data_log.append([global_time, elapsed_time, current_position_0, current_position_1, motor0_tor, motor1_tor])
+            elapsed_time = New_Time - Elapsed_Start_Time
+            global_time = datetime.now()
+            formatted_global_time = global_time.strftime("%Y-%m-%d %H:%M:%S.%f")
+            data_log.append([formatted_global_time, elapsed_time, current_position_0, current_position_1, motor0_tor, motor1_tor])
 
-            # Compute state variables from encoder data
+            # Compute state variables based on encoder data
             phi_1, phi_2, phi_1_vel, phi_2_vel, theta, rho, theta_vel, rho_vel = \
                 get_state_variables(current_position_0, current_position_1, current_velocity_0, current_velocity_1)
             
-            # ---------------- Adaptive Gain Scheduling for Rho ----------------
-            # Assume that when rho is far from vertical (vertical_rho), gravity plays a bigger role.
-            base_rho_Kp = 3.0
-            base_rho_Kd = 0.35
-            vertical_rho = 1.57  # radians: configuration when the linkage is vertical
-            if abs(rho - vertical_rho) > 0.5:
-                adaptive_factor = 1.5
-            else:
-                adaptive_factor = 1.0
-            Rho_PD_Controller.Kp = base_rho_Kp * adaptive_factor
-            Rho_PD_Controller.Kd = base_rho_Kd * adaptive_factor
-            # --------------------------------------------------------------------
-
-            # Compute PD outputs for theta and rho
+            # Compute PD outputs for theta and rho using fixed gains
             theta_torque = Theta_PD_Controller.update(theta, current_time)
             rho_torque   = Rho_PD_Controller.update(rho, current_time)
-
-            # ---------------- Feed-Forward Gravity Compensation ----------------
-            # Gravity feed-forward is added only to the rho channel.
-            # We assume gravity exerts no moment when rho == vertical_rho and increases with sin(angle from vertical).
-            gravity_gain = 2.0  # Tune this value based on your system
-            ff_rho = -gravity_gain * math.sin(rho - vertical_rho)
-            rho_torque = rho_torque + ff_rho
-            # ------------------------------------------------------------------
-
+            
             # Compute motor torques from the computed theta and rho torques
             Motor0_Torque, Motor1_Torque = get_torques(theta_torque, rho_torque)
             
             set_torque(Motor0, Motor0_Torque)
             set_torque(Motor1, Motor1_Torque)
-
-            # A short sleep to prevent a busy loop (adjust as needed)
-            time.sleep(0.005)
             
-    except Exception as e:
-        print("Error in control loop:", e)
-    finally:
-        # On exit, set the nodes to idle.
-        for node in [0, 1]:
-            set_idle(node)
-        print("Control loop terminated.")
-        # If user requested data saving, save the log to a CSV file.
-        if params['save_data']:
-            now = datetime.now()
-            filename = params['csv_name'] if params['csv_name'] else now.strftime("DPROBE-%H:%M_%m-%d.csv")
-            file_path = os.path.join(os.getcwd(), "Data")
-            os.makedirs(file_path, exist_ok=True)
-            full_path = os.path.join(file_path, filename)
-            try:
-                with open(full_path, mode='w', newline='') as file:
-                    writer = csv.writer(file)
-                    writer.writerow(['Global Time', 'Elapsed Time', 'Motor 0 Position', 'Motor 1 Position', 'Motor 0 Torque', 'Motor 1 Torque'])
-                    writer.writerows(data_log)
-                print("Data saved to:", full_path)
-            except Exception as e:
-                print("Error saving data:", e)
+    except KeyboardInterrupt:
+        print("Keyboard interrupt detected. Setting nodes to idle...")
+        for node_id in nodes:
+            set_idle(node_id)
+        print("Nodes set to idle. Exiting program.")
 
-# -------------------------- UI Code --------------------------
-
-class ControlUI:
-    def __init__(self, root):
-        self.root = root
-        root.title("Robot Control UI")
-
-        # Create frames for organization
-        input_frame = ttk.Frame(root, padding="10")
-        input_frame.grid(row=0, column=0, sticky="ew")
-        button_frame = ttk.Frame(root, padding="10")
-        button_frame.grid(row=1, column=0, sticky="ew")
-
-        # --- Create UI elements for velocities, setpoints, and gains ---
-
-        # Theta velocity
-        ttk.Label(input_frame, text="Theta Velocity (rad/s):").grid(row=0, column=0, sticky="w")
-        self.theta_vel_entry = ttk.Entry(input_frame)
-        self.theta_vel_entry.insert(0, "0.1")
-        self.theta_vel_entry.grid(row=0, column=1, sticky="w")
-
-        # Rho velocity
-        ttk.Label(input_frame, text="Rho Velocity (rad/s):").grid(row=1, column=0, sticky="w")
-        self.rho_vel_entry = ttk.Entry(input_frame)
-        self.rho_vel_entry.insert(0, "0.1")
-        self.rho_vel_entry.grid(row=1, column=1, sticky="w")
-
-        # Theta setpoint
-        ttk.Label(input_frame, text="Theta Setpoint (rad):").grid(row=2, column=0, sticky="w")
-        self.theta_set_entry = ttk.Entry(input_frame)
-        self.theta_set_entry.insert(0, "3.323")
-        self.theta_set_entry.grid(row=2, column=1, sticky="w")
-
-        # Rho setpoint
-        ttk.Label(input_frame, text="Rho Setpoint (rad):").grid(row=3, column=0, sticky="w")
-        self.rho_set_entry = ttk.Entry(input_frame)
-        self.rho_set_entry.insert(0, "3.16")
-        self.rho_set_entry.grid(row=3, column=1, sticky="w")
-
-        # Theta gains
-        ttk.Label(input_frame, text="Theta Kp:").grid(row=4, column=0, sticky="w")
-        self.theta_Kp_entry = ttk.Entry(input_frame)
-        self.theta_Kp_entry.insert(0, "3")
-        self.theta_Kp_entry.grid(row=4, column=1, sticky="w")
-
-        ttk.Label(input_frame, text="Theta Kd:").grid(row=5, column=0, sticky="w")
-        self.theta_Kd_entry = ttk.Entry(input_frame)
-        self.theta_Kd_entry.insert(0, "0.35")
-        self.theta_Kd_entry.grid(row=5, column=1, sticky="w")
-
-        # Rho gains
-        ttk.Label(input_frame, text="Rho Kp:").grid(row=6, column=0, sticky="w")
-        self.rho_Kp_entry = ttk.Entry(input_frame)
-        self.rho_Kp_entry.insert(0, "3")
-        self.rho_Kp_entry.grid(row=6, column=1, sticky="w")
-
-        ttk.Label(input_frame, text="Rho Kd:").grid(row=7, column=0, sticky="w")
-        self.rho_Kd_entry = ttk.Entry(input_frame)
-        self.rho_Kd_entry.insert(0, "0.35")
-        self.rho_Kd_entry.grid(row=7, column=1, sticky="w")
-
-        # Save data?
-        self.save_data_var = tk.BooleanVar(value=False)
-        self.save_data_check = ttk.Checkbutton(input_frame, text="Save Data?", variable=self.save_data_var)
-        self.save_data_check.grid(row=8, column=0, sticky="w")
-
-        # CSV file name
-        ttk.Label(input_frame, text="CSV Filename:").grid(row=8, column=1, sticky="w")
-        self.csv_name_entry = ttk.Entry(input_frame)
-        self.csv_name_entry.insert(0, "data.csv")
-        self.csv_name_entry.grid(row=8, column=2, sticky="w")
-
-        # --- Buttons ---
-        self.execute_button = ttk.Button(button_frame, text="Execute Control", command=self.execute_control)
-        self.execute_button.grid(row=0, column=0, padx=5)
-        self.abort_button = ttk.Button(button_frame, text="Abort Control", command=self.abort_control)
-        self.abort_button.grid(row=0, column=1, padx=5)
-
-        # A label for status messages
-        self.status_label = ttk.Label(root, text="Status: Idle")
-        self.status_label.grid(row=2, column=0, sticky="w", padx=10, pady=5)
-
-    def execute_control(self):
-        # Gather parameters from the UI
-        try:
-            params = {
-                'theta_velocity': float(self.theta_vel_entry.get()),
-                'rho_velocity': float(self.rho_vel_entry.get()),
-                'theta_setpoint': float(self.theta_set_entry.get()),
-                'rho_setpoint': float(self.rho_set_entry.get()),
-                'theta_Kp': float(self.theta_Kp_entry.get()),
-                'theta_Kd': float(self.theta_Kd_entry.get()),
-                'rho_Kp': float(self.rho_Kp_entry.get()),
-                'rho_Kd': float(self.rho_Kd_entry.get()),
-                'save_data': self.save_data_var.get(),
-                'csv_name': self.csv_name_entry.get().strip()
-            }
-        except ValueError:
-            messagebox.showerror("Input Error", "Please enter valid numeric values.")
-            return
-
-        global control_thread, stop_control
-        stop_control = False
-        control_thread = threading.Thread(target=control_loop, args=(params,), daemon=True)
-        control_thread.start()
-        self.status_label.config(text="Status: Running control...")
-
-    def abort_control(self):
-        global stop_control, control_thread
-        stop_control = True
-        if control_thread is not None:
-            control_thread.join(timeout=2)  # wait briefly for the thread to exit
-        self.status_label.config(text="Status: Control aborted.")
-
-# -------------------------- Main --------------------------
-
-if __name__ == "__main__":
-    root = tk.Tk()
-    app = ControlUI(root)
-    root.mainloop()
+        now = datetime.now()
+        filename = now.strftime("DPROBE-%H:%M_%m-%d.csv")
+        file_path = "/home/traveler/Traveler_Hopper_sw-bundle/Data/DPROBE"
+        os.makedirs(file_path, exist_ok=True)
+        full_path = os.path.join(file_path, filename)
+        
+        print("Saving Data to: " + full_path)
+        csv_header = ['Global Time', 'Elapsed Time', 'Motor 0 Position', 'Motor 1 Position', 'Motor 0 Torque', 'Motor 1 Torque']
+        with open(full_path, mode='w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(csv_header)
+            writer.writerows(data_log)
+        print("Save Complete")
